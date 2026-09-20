@@ -43,7 +43,9 @@ totals. Recorded in `COMPONENT_PARITY.md`.
 the same `(msgctxt, msgid)` keys, byte for byte, under the same domain name,
 with upstream's whole `po/` directory carried across. Byte-identical because a
 msgid is a hash key, and one reworded label silently discards every language's
-translation of it. Recorded in `TRANSLATION_PARITY.md`.
+translation of it. Both trees emit a `catalogue.yaml`; comparing them generates
+`translation-parity.yaml`, whose `summary.parity` is the boolean. The
+judgements go in `TRANSLATION_PARITY.md`, because the YAML is regenerated.
 
 ## Install
 
@@ -76,6 +78,8 @@ as strings deleted since the last `msgmerge` and strings added since.
 ```sh
 test-parity/scripts/test-census.sh <tree>              # file, test id, line
 translation-parity/scripts/msgid-census.sh <tree>      # msgctxt, msgid, kind, file:line
+translation-parity/scripts/catalogue.rb <tree> --role upstream      # -> catalogue.yaml
+translation-parity/scripts/catalogue.rb --compare up.yaml port.yaml # -> translation-parity.yaml
 component-identification/scripts/gir-symbols.sh > scripts/symbols.tsv        # once: the GTK symbol table
 component-identification/scripts/component-scan.sh <tree>  # file, kind, value, count
 ```

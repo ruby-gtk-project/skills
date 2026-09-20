@@ -34,7 +34,7 @@ said produces a port with 217 messages and zero translations.
 
 A GNOME app's `po/` directory is the largest body of donated human work in the
 repository and the only part of it no developer can reproduce. gnome-contacts
-carries 78 languages and 15,703 translated strings, contributed over fourteen
+carries 78 languages and 15,352 translated strings, contributed over fourteen
 years by people who are mostly not programmers and mostly cannot be asked
 again. The port inherits all of it for free — *if and only if* its English is
 byte-identical to upstream's. One reworded label silently discards 78
@@ -88,13 +88,18 @@ UP=$(gh api "repos/ruby-gtk-project/$REPO" --jq '.parent.default_branch')
 ```
 
 ```sh
-scripts/msgid-census.sh <upstream-tree> > upstream-msgids.tsv
-scripts/msgid-census.sh <port-tree>     > port-msgids.tsv
+scripts/catalogue.rb <upstream-tree> --role upstream > upstream-catalogue.yaml
+scripts/catalogue.rb <port-tree>     --role port     > port-catalogue.yaml
 ```
 
-One row per message: `msgctxt<TAB>msgid<TAB>kind<TAB>file:line`, with `-` for
-no context. The key is the `(msgctxt, msgid)` pair, because that is what
-gettext looks up — so `cut -f1,2 | sort -u` is the catalogue and everything
+That is the artifact the rest of this skill works on — the format is below,
+under **The data format**. Underneath it, `scripts/msgid-census.sh <tree>`
+does the extraction and prints one row per *call site*:
+`msgctxt<TAB>msgid<TAB>kind<TAB>file:line`, with `-` for no context. Run it
+directly when you want to grep the raw scan; the catalogue is what you diff.
+
+The key is the `(msgctxt, msgid)` pair, because that is what gettext looks up
+— so `cut -f1,2 | sort -u` over the census is the catalogue and everything
 else is provenance.
 
 The script reads the marker set shared by Vala, C, blueprint, GtkBuilder XML,
@@ -139,15 +144,82 @@ gives you keys; the ledger needs to say what each message is *for*, and
 and `%llu Selected` — because one counts a `GLib.ListModel` and the other
 counts an `int`. Port both. Merging them is a gap in disguise.
 
-### Step 2 — Diff
+### Step 2 — Measure, then diff
+
+```sh
+scripts/catalogue.rb --compare upstream-catalogue.yaml port-catalogue.yaml > translation-parity.yaml
+```
+
+That computes every number below and writes the comparison document. Read its
+`summary:` block first; the rest of this step is what those fields mean and
+how to check them by hand when you distrust one.
+
+The report carries five metrics. Take all five; they answer different
+questions and only the first one is the pass condition.
 
 ```sh
 cut -f1,2 upstream-msgids.tsv | sort -u > up.keys
 cut -f1,2 port-msgids.tsv     | sort -u > port.keys
+
+wc -l < up.keys                                  # 1. messages (distinct keys)   217
+wc -l < upstream-msgids.tsv                      # 2. occurrences (call sites)   260
+ls up/po/*.po | wc -l                            # 3. languages                   78
+ruby scripts/catalogue.rb up --role upstream     # 4. translated strings      15,352
+cut -f1,2 upstream-msgids.tsv | sort | uniq -c | sort -rn   # 5. uses per message
+```
+
+**1 — messages.** The catalogue size, and the only number parity is defined
+on. gettext is a hash table: one entry per `(msgctxt, msgid)` key however many
+call sites reach it.
+
+```sh
 comm -23 up.keys port.keys | wc -l    # gaps: upstream messages the port does not produce
 comm -13 up.keys port.keys | wc -l    # extra: port messages nobody has translated
 comm -12 up.keys port.keys | wc -l    # ported
 ```
+
+**2 — occurrences.** 260 against 217 means 19 messages are reused. Report both
+numbers and the gap between them, per message, in the `Uses` column. It is
+what tells you a message is load-bearing: `_Cancel` is nine call sites, so it
+is nine places the port can drop it, and a port at `9 → 2` has seven
+untranslated buttons that the key-set diff will never show, because the key is
+present. That is a real finding and it belongs in the report.
+
+**It is a finding, not a pass condition.** Do not require `port uses ==
+upstream uses`. The count asserts something about the port's *structure* —
+how many dialogs it builds, whether its cancel buttons come from one shared
+helper — which is `COMPONENT_PARITY.md`'s question and is answered there per
+component. Made a translation condition it fails both ways: a port that builds
+nine cancel buttons through one helper reads `1 → 9` and is correct, and a
+port that pads its literals to nine passes while nothing changed. So a `Uses`
+mismatch opens an investigation and, where it turns out to be a missing call
+site, a **component** row — never a translation row that the key set says is
+`ported`.
+
+**3 and 4 — languages and translated strings.** These are the inherited asset,
+and the port either carries them or destroys them. 78 and 15,352 go in the
+header as a pair with what the port ships, because `0 of 78` is the headline
+finding of an untranslated port and a raw message count hides it completely.
+Count `.po` files rather than trusting `LINGUAS` — a language present in one
+and not the other is itself a defect, and `diff` is the check:
+
+```sh
+diff <(ls up/po/*.po | xargs -n1 basename -s .po | sort) <(sort up/po/LINGUAS)
+```
+
+Take the translated-string count from `catalogue.rb` rather than counting
+`msgstr` lines. `grep -c '^msgstr'` over gnome-contacts' `po/` gives 15,703,
+which is 351 too many and wrong three separate ways: it counts the 78 file
+headers, which hold `Plural-Forms` and a translator name rather than a
+translation; it counts the 273 entries whose `msgstr` is empty as translated;
+and `grep -c '^msgstr "..*"'` — the obvious correction — swings 600 the other
+way, because a long translation is written as `msgstr ""` followed by
+continuation lines and so looks empty on its first line. The right number for
+gnome-contacts is **15,352 translated and 273 untranslated over 15,625
+entries**, and those three figures reconcile. Report one that does.
+
+**5 — uses per message**, sorted descending, is the porting order. Work down
+it and the port's most-repeated strings land first.
 
 Then compare `kind` on the shared keys — a message that is `plural` upstream
 and `single` in the port is a gap, because the port will show "1 contacts":
@@ -165,10 +237,121 @@ And compare the language sets, which is a `ls`:
 diff <(ls up/po/*.po | xargs -n1 basename) <(ls port/po/*.po | xargs -n1 basename)
 ```
 
+### The data format
+
+Two documents, both **generated and never hand-edited**. They hold facts a
+machine can recompute; the judgements it cannot recompute — why a gap is open,
+which component it waits on, what a reviewer decided — live in
+`TRANSLATION_PARITY.md`. Regenerating the YAML must never destroy anything, so
+nothing that matters may only exist there.
+
+Both are sorted by `(ctxt, id)`, so plain `diff` over two of them is readable
+without the compare step.
+
+#### `<role>-catalogue.yaml` — one tree
+
+```yaml
+version: 1
+tree:
+  role: upstream            # upstream | port
+  path: up
+  ref: main
+  sha: 86f14e6a
+  scanned: '2026-09-20'
+domain: gnome-contacts      # meson.project_name(), or the Rakefile's task.domain
+totals:
+  messages: 217             # distinct (ctxt, id) keys - the catalogue size
+  occurrences: 260          # call sites
+  reused: 19                # messages with more than one call site
+  plural: 8
+  with_context: 11
+languages:
+  count: 78                 # .po files, not LINGUAS
+  translated_strings: 15352
+  untranslated_strings: 273
+  linguas_matches_files: true
+  only_in_linguas: []       # present only when non-empty
+  only_in_po_files: []
+  list: [ab, af, ar, ...]
+messages:
+  - id: Export
+    kind: single            # single | plural
+    uses: 1
+    sites: ['data/ui/contacts-main-window.blp:77']
+  - ctxt: shortcut window   # omitted entirely when the message has no context
+    id: Open menu
+    kind: single
+    uses: 1
+    sites: ['data/ui/contacts-shortcut-dialog.blp:16']
+```
+
+`ctxt` is **absent**, not empty, when a message has no context — so a key is
+`[ctxt, id]` with a real nil, and no msgid beginning with a sentinel character
+can collide with a real context. `uses` and `sites` are outside the identity
+on purpose: two trees that reach one key a different number of times still
+hold the same message.
+
+`po/` is excluded from `messages:` even though the census scans it. A `.po`
+lists every msgid the last `msgmerge` knew about, deleted ones included, so
+counting it would report a tree as emitting strings its code no longer has.
+The po files are read for `languages:` and nothing else.
+
+#### `translation-parity.yaml` — the comparison
+
+```yaml
+version: 1
+upstream: {role: upstream, ref: main, sha: 86f14e6a, domain: gnome-contacts,
+           messages: 217, occurrences: 260, reused: 19, plural: 8, with_context: 11}
+port:     {role: port, ref: ruby, sha: 13b5ba33, domain: null,
+           messages: 0, occurrences: 0, reused: 0, plural: 0, with_context: 0}
+summary:
+  ported: 0
+  gaps: 217
+  extra: 0                  # port keys upstream never had - untranslated by definition
+  kind_mismatch: 0          # same key, plural one side and single the other
+  uses_mismatch: 0          # same key, different number of call sites
+  occurrences: {upstream: 260, port: 0}
+  languages: {upstream: 78, port: 0}
+  languages_missing: [ab, af, ar, ...]
+  domain_matches: false
+  parity: false
+messages:
+  - id: Export
+    state: ported           # ported | gap | extra
+    kind: {upstream: single, port: single}
+    uses: {upstream: 1, port: 1}
+    upstream_sites: ['data/ui/contacts-main-window.blp:77']
+    port_sites: ['lib/main.rb:212']
+  - ctxt: shortcut window
+    id: Open menu
+    state: gap
+    kind: {upstream: single, port: null}
+    uses: {upstream: 1, port: 0}
+    upstream_sites: ['data/ui/contacts-shortcut-dialog.blp:16']
+    text_owed: Open menu    # present only on gaps: the byte-identical English
+```
+
+`summary.parity` is the single boolean, and it is true only when there are no
+gaps, no `kind_mismatch`, no missing language and the domain matches. Note
+what is **not** in it: `uses_mismatch` and `extra`. Both are reported on every
+run and neither blocks parity — `uses_mismatch` is a component question
+(Step 2, metric 2) and `extra` is a list of strings the port owes translators,
+not strings it owes upstream. A checker that failed on either would be failing
+on the wrong ledger's business.
+
+`text_owed` exists so that closing a gap is transcription. Copy it; never
+retype it.
+
 ### Step 3 — Write the ledger
 
-`TRANSLATION_PARITY.md` at the root of the port's `ruby` branch. It is the
-contract, not a summary of one.
+`TRANSLATION_PARITY.md` at the root of the port's `ruby` branch. Its tables
+render `translation-parity.yaml` — the counts, states, kinds, uses and sites
+all come from the generated document, so do not maintain them by hand and do
+not let the two disagree. What the markdown adds is everything the YAML cannot
+carry: the grouping by upstream source file, and the sentence per gap saying
+what it waits on.
+
+It is the contract, not a summary of one. Commit both files.
 
 ```markdown
 # Translation parity — <app>
@@ -182,18 +365,28 @@ contract, not a summary of one.
 | Ported | 0 |
 | Gaps | 217 |
 | Extra (untranslated) | 0 |
-| Upstream languages | 78 |
+| Upstream occurrences | 260 across 217 messages (19 reused) |
+| Port occurrences | 0 |
+| Upstream languages | 78 `.po` files, 15,352 translated strings |
 | Languages shipped by the port | 0 |
 | Build command | `rake gettext:mo` |
 
 ## src/contacts-main-window.vala → lib/main.rb (38 messages)
 
-| # | msgctxt | msgid | Kind | Port site | State |
-|---|---|---|---|---|---|
-| 1 | — | `Export` | single | `lib/main.rb:212` `_("Export")` | ported |
-| 2 | — | `%llu Selected` | plural | `lib/main.rb:180` `n_("%llu Selected", "%llu Selected", n)` | ported |
-| 3 | shortcut window | `Open menu` | single | — | **gap** |
+| # | msgctxt | msgid | Kind | Uses | Port site | State |
+|---|---|---|---|---|---|---|
+| 1 | — | `Export` | single | 1 → 1 | `lib/main.rb:212` `_("Export")` | ported |
+| 2 | — | `%llu Selected` | plural | 1 → 1 | `lib/main.rb:180` `n_("%llu Selected", "%llu Selected", n)` | ported |
+| 3 | — | `_Cancel` | single | 9 → 2 | `lib/crop_dialog.rb:44`, `lib/import_dialog.rb:71` | ported ⚠ |
+| 4 | shortcut window | `Open menu` | single | 1 → 0 | — | **gap** |
 ```
+
+`Uses` is `<upstream call sites> → <port call sites>`, from metric 2. Row 3 is
+`ported` — the key is in the catalogue, which is what translation parity
+asks — and it is flagged, because seven of the nine buttons are somewhere
+else or nowhere. Chase it in `COMPONENT_PARITY.md`; the flag comes off when
+that ledger accounts for all nine, whether as nine components or as one
+helper used nine times.
 
 Group the tables by upstream *source file*, mapped to the port file that
 replaced it, the same way `COMPONENT_PARITY.md` groups by component — a flat
@@ -233,23 +426,36 @@ in four lines:
 
 ### Step 5 — Prove it
 
-Parity is proven when all five hold:
+Parity is proven when all three hold:
 
-- `comm -23 up.keys port.keys` is empty;
-- every shared key has the same `kind` in both censuses;
-- the port's `po/` holds the same language set as upstream's;
+- `summary.parity` is `true` in a freshly regenerated `translation-parity.yaml`
+  — which is gaps `0`, `kind_mismatch` `0`, `languages_missing` empty and
+  `domain_matches` true, all at once;
 - `msgfmt`/`rmsgfmt` compiles every `.po` without error, and the port's build
   target installs one `.mo` per language;
 - the app runs under a non-English locale and shows translated text —
   `LANGUAGE=de LC_ALL=de_DE.UTF-8 <port binary>`, driven headless per
   `ruby-gtk-testing`, asserting on one known string.
 
-That last one is not optional. A correct catalogue that is never bound, or is
-bound to the wrong path, produces an app that is 100% translated on paper and
-entirely English on screen, and nothing in the first four checks catches it.
+Regenerate before reading; a `parity: true` from an old run proves the state
+of an old tree. The compare step is cheap and has no excuse not to be rerun.
 
-Report the numbers, not an adjective. "217/217, 78 languages, `de` verified on
-screen" is a claim someone can re-run. "Fully localised" is not.
+The last check is not optional and is the only one that is not a document.
+A correct catalogue that is never bound, or is bound to the wrong path,
+produces an app that is 100% translated on paper and entirely English on
+screen, and `summary.parity` will say `true` the whole time.
+
+Report every metric, not an adjective — and report them as pairs against
+upstream, because a lone number cannot be read:
+
+```
+217/217 messages · 260/260 occurrences · 78/78 languages · 15,352 strings · de verified on screen
+```
+
+That is a claim someone can re-run. "Fully localised" is not. Occurrences are
+reported even though they are not the pass condition: `217/217 · 190/260` is a
+port that has the whole catalogue and is missing 70 call sites, which the
+message count alone reads as finished.
 
 ### When upstream has no translations
 
@@ -293,10 +499,15 @@ Upstream `main` @ `86f14e6` carries **217** distinct messages:
 | `data/org.gnome.Contacts.metainfo.xml.in.in` | 10 |
 | `data/org.gnome.Contacts.desktop.in.in` | 3 |
 
-(260 rows, 217 unique keys — a string like `_Cancel` appears in several files.)
-Of the 217, **8 are plurals** and **11 carry a msgctxt**, all of them
-`"shortcut window"`. `po/` holds **78** languages and **15,703** translated
-strings; `eu` is at 100%, `fr` at 94%, `ab` at 22%.
+That is **260 occurrences** over **217 distinct keys**: 19 messages are reused,
+led by `_Cancel` at nine call sites, `Contacts` at six, `Select a Contact` and
+`_Done` at five. Of the 217, **8 are plurals** and **11 carry a msgctxt**, all
+of them `"shortcut window"`.
+
+`po/` holds **78** `.po` files and **15,352** translated strings, and `LINGUAS`
+matches the file list exactly. Completeness ranges from `eu` at 100% through
+`fr` at 94% to `ab` at 22% — all 78 ship, because untranslated entries fall
+back to the msgid and a deleted language starts its next contributor at zero.
 
 The `ruby` branch @ `13b5ba3` has **no `po/` directory**, no gettext dependency,
 and the census of it returns **zero rows**. So the ledger opens at
@@ -337,6 +548,13 @@ those files exist, and it is simultaneously a component-parity finding. The
 - Never invent a domain name for the port. The domain is upstream's, because
   the catalogues are upstream's.
 - Never count a row `ported` from reading the code. Count it from the census.
+- Never hand-edit the YAML. It is generated; anything written there is lost on
+  the next run, which makes it the worst possible place to record a decision.
+  Decisions go in `TRANSLATION_PARITY.md`.
+- Never make the occurrence count a pass condition, and never leave it out of
+  the report. It is the metric that finds a dropped call site behind a key the
+  catalogue already has; it is not a statement about the catalogue. Equal keys
+  decide parity, unequal uses open a component investigation.
 - Never drop a language because its `.po` is 22% translated. Partial is what
   gettext is built for — untranslated entries fall back to the msgid — and a
   language deleted from `LINGUAS` is a language whose next contributor starts
