@@ -82,6 +82,9 @@ under-reports in known ways, and every one of them needs a human decision:
 **Over-reports.** Namespaced names that are not widgets at all land in the
 `widget` stream: `Adw.Easing`, `Adw.DialogPresentationMode`, `Gtk.Orientation`
 — enums, flags and helper types. Strike them; they are not components.
+`Gtk.Template`, `Gtk.Template.Child` and `Gtk.Template.Callback` are PyGObject
+template plumbing and are filtered by the script, but the widgets they stand
+for are real — their types are in the `.blp`/`.ui`, not in the Python.
 `Adw.CallbackAnimationTarget` and `Adw.TimedAnimation` are real objects but not
 widgets, so they belong under behaviour, not in the widget count.
 
@@ -129,7 +132,11 @@ the thing being ported.
 Absent a `PLAN.md` (see below), take a unit to be **one top-level widget class**
 — one `.ui`/`.blp` template, one `impl ObjectSubclass` block, one `GtkWidget`
 subclass — together with the source file that backs it and the port file that
-corresponds to it.
+corresponds to it. Two additions, without which real parts of the app belong to
+no unit at all:
+
+- **One unit for the application class.** `BinaryApplication(Adw.Application)` is not a widget class, but it holds the actions, the accelerators, the About dialog and the preferences entry point.
+- **One unit per standalone `.blp`/`.ui` object with no backing source file** — a shortcuts window or a menu definition is a component that no widget subclass owns.
 
 The exception is the opening survey of a fresh fork, where the totals are the
 point:

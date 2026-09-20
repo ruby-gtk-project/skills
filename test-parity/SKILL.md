@@ -59,7 +59,8 @@ original share one repo. The upstream branch is the fork parent's default
 branch, which is not always `main`:
 
 ```sh
-UP=$(gh api repos/ruby-gtk-project/$REPO --jq '.parent.default_branch')
+REPO=$(basename -s .git "$(git remote get-url origin)")   # e.g. binary-rb, not binary
+UP=$(gh api "repos/ruby-gtk-project/$REPO" --jq '.parent.default_branch')
 ```
 
 `ruby` is an **orphan** branch — it shares no history with upstream, so
@@ -101,6 +102,20 @@ Mirror the *repeater* rule from `component-identification`: one row, the
 identifier written with the interpolation intact (`on page #{page_nr}`), and
 the loop's range stated in the Purpose cell. Step 4's "exists by that name"
 check is then read against the interpolated form.
+
+The same rule covers every table-driven form: `@pytest.mark.parametrize`,
+`unittest`'s `subTest`, a Vala loop over fixtures, a Rust `#[test_case]`. One
+row, the parameter set in the Purpose cell.
+
+**When an identifier repeats**, the name alone is not a key — two `test_one`s
+in two classes in one file, or six `check('a dialog is showing')` calls in one
+driver, are distinct cases. The ledger cell is then `file#identifier@line`, and
+the census row's third column is part of the key. Check for these before
+writing the ledger:
+
+```sh
+cut -f2 port-tests.tsv | sort | uniq -d
+```
 
 ### Step 2 — Write the ledger
 
@@ -186,8 +201,10 @@ and do not pad the `## Extra` section into a ledger it is not:
 | Ported | 0 |
 | Gaps | 0 |
 
-Upstream has no test suite (verified: no `#[test]`, no `#[cfg(test)]`, no
-`tests/`). Parity is 0/0 and is met trivially. **The port therefore inherits no
+Upstream has no test suite (verified: the census is empty, and no `def test_*`,
+`unittest`, `pytest`, `#[test]`, `#[cfg(test)]`, `Test.add_func`, `it(...)`,
+no `test/` or `tests/` directory and no test target in the build files).
+Parity is 0/0 and is met trivially. **The port therefore inherits no
 safety net** — every check below was written for the port and pins nothing
 upstream considered worth pinning.
 

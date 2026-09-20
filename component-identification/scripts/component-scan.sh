@@ -29,6 +29,7 @@ srcfiles() {
     -not -path '*/build/*' -not -path '*/node_modules/*' -not -path '*/vendor/*' \
     -not -path '*/subprojects/*' -not -path '*/.bundle/*' \
     -not -path '*/.claude/skills/*' -not -path '*/target/debug/*' \
+    -not -path '*/test/*' -not -path '*/tests/*' -not -path '*/spec/*' \
     \( -name '*.ui' -o -name '*.blp' -o -name '*.vala' -o -name '*.c' \
        -o -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.rs' \
        -o -name '*.rb' \) 2>/dev/null
@@ -65,7 +66,20 @@ srcfiles | while IFS= read -r f; do
     # inside TemplateChild<gtk::Button>, which is an instance site.
     grep -ohE '\b(gtk4?|adw|libadwaita)::[A-Z][A-Za-z0-9]+' "$f" 2>/dev/null \
       | sed -E 's/^gtk4?::/Gtk./; s/^(adw|libadwaita)::/Adw./'
-  } | tally "$rel" widget
+    # Blueprint bare declarations. `using Gtk 4.0` makes Gtk the implicit
+    # namespace, so the whole widget tree is written unprefixed - `Box {`,
+    # `MenuButton btn {`, `content: WindowHandle {`. Without this the only
+    # widgets found in a .blp are the Adw.-prefixed ones, which on a typical
+    # app is four rows out of thirty.
+    case "$f" in *.blp)
+      {
+        grep -ohE '^[[:space:]]*[A-Z][A-Za-z0-9]+([[:space:]]+[a-z_][A-Za-z0-9_]*)?[[:space:]]*\{' "$f" 2>/dev/null \
+          | sed -E 's/^[[:space:]]*([A-Z][A-Za-z0-9]+).*/\1/'
+        grep -ohE '[a-z][a-z0-9_-]*:[[:space:]]*[A-Z][A-Za-z0-9]+[[:space:]]*\{' "$f" 2>/dev/null \
+          | sed -E 's/.*:[[:space:]]*([A-Z][A-Za-z0-9]+).*/\1/'
+      } | sed 's/^/Gtk./' ;;
+    esac
+  } | grep -vxE 'Gtk\.Template' | tally "$rel" widget
 
   # --- css classes ---------------------------------------------------------
   {
@@ -75,8 +89,11 @@ srcfiles | while IFS= read -r f; do
     grep -ohE 'add_css_class *\( *"[^"]+"' "$f" 2>/dev/null | sed 's/^[^"]*"//; s/"$//'
     grep -ohE "add_css_class *\( *'[^']+'" "$f" 2>/dev/null | sed "s/^[^']*'//; s/'$//"
     # css_classes = ["flat"] / styles ["flat"] (blueprint) /
-    # .css_classes(vec!["flat"]) and .set_css_classes(&["flat"]) (gtk-rs)
-    grep -ohE '(set_)?(css_classes|styles) *[=:(]? *(vec!)? *&? *\[[^]]*\]' "$f" 2>/dev/null \
+    # .css_classes(vec!["flat"]) and .set_css_classes(&["flat"]) (gtk-rs).
+    # Blueprint normally breaks these across lines, so the bracket is tracked
+    # with a state machine rather than matched on one line.
+    awk '/(^|[^A-Za-z_])(set_)?(css_classes|styles)[[:space:]]*[=:(]?[[:space:]]*(vec!)?[[:space:]]*&?[[:space:]]*\[/ { s = 1 }
+         s { print; if (/\]/) s = 0 }' "$f" 2>/dev/null \
       | grep -ohE '"[^"]+"' | tr -d '"'
   } | tally "$rel" css
 
@@ -111,7 +128,7 @@ srcfiles | while IFS= read -r f; do
   {
     grep -ohE "['\"](app|win)\.[A-Za-z0-9_.-]+['\"]" "$f" 2>/dev/null | tr -d "\"'"
     grep -ohE '>(app|win)\.[A-Za-z0-9_.-]+<' "$f" 2>/dev/null | tr -d '><'
-    grep -ohE '(SimpleAction\.new|install_action|add_action|action_name) *[(=:] *["'"'"'][A-Za-z0-9_.-]+' \
+    grep -ohE '(SimpleAction\.new|install_action|add_action|create_action|lookup_action|action_name) *[(=:] *["'"'"'][A-Za-z0-9_.-]+' \
       "$f" 2>/dev/null | sed -E 's/.*["'"'"']//'
   } | tally "$rel" action
 

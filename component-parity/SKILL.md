@@ -73,7 +73,8 @@ original on its branch, the port on `ruby`:
 ```sh
 # The fork's upstream branch is whatever the parent's default branch is -
 # it is not always `main`, and these forks carry release branches too.
-UP=$(gh api repos/ruby-gtk-project/$REPO --jq '.parent.default_branch')
+REPO=$(basename -s .git "$(git remote get-url origin)")   # e.g. binary-rb, not binary
+UP=$(gh api "repos/ruby-gtk-project/$REPO" --jq '.parent.default_branch')
 
 # The `ruby` branch is an ORPHAN branch - it shares no history with upstream,
 # so `git merge-base` returns nothing. There is no commit to derive; the
@@ -109,13 +110,23 @@ one Ruby file. So before joining anything, *union the rows of every upstream
 file on the left of an arrow*:
 
 ```sh
-awk -F'\t' -v u="src/widgets/paginator.rs|data/resources/ui/paginator.ui" \
-  '$1 ~ u {k[$2 FS $3] += $4} END {for (x in k) print x FS k[x]}' up.tsv | sort
+union() {   # union <tsv> <file1|file2|...>
+  awk -F'\t' -v u="$2" '$1 ~ u {k[$2 FS $3] += $4} END {for (x in k) print x FS k[x]}' "$1" | sort
+}
+union up.tsv   "src/window.py|src/window.blp"
+union port.tsv "lib/window.rb|lib/conversion_row.rb"
 ```
 
-Compare that union against the port file's rows. Joining file-to-file instead
-puts the widget tree on one side and the callbacks on the other, and reports
-both halves as missing.
+Union **both** sides — the mapping is often 2→2, not 2→1, because the port
+factors a block that upstream repeats inline into its own file.
+
+Two corrections to make by hand before you trust the union:
+
+- **The template root is one widget counted twice.** `class BinaryWindow(Adw.ApplicationWindow)` in the source and `template $BinaryWindow: Adw.ApplicationWindow` in the `.blp` are the same window. Summing gives 2 against the port's 1. Strike the source-file row for the parent type before unioning.
+- **A port file with no upstream file opposite it** is either a factored-out repeat — name the upstream block it came from — or an unexplained extra. It is not automatically a gap in either direction.
+
+Joining file-to-file instead of unioning puts the widget tree on one side and
+the callbacks on the other, and reports both halves as missing.
 
 An upstream file with no port file opposite it is the first and largest kind of
 gap, and it is found here rather than in any diff.
@@ -142,7 +153,20 @@ Read the result as three questions, in this order:
   explained, because an unexplained extra is usually a widget standing in for
   one that was not understood.
 
-Then the same over `css`, `signal` and `action`.
+Then the same over `css`, `signal` and `action` — but read their counts
+differently:
+
+> **Only the `widget` stream's counts are per-instance.** A `css` or `signal`
+> count is the number of *attachment sites* in the text. Upstream calling
+> `add_css_class("error")` in six branches of one handler, against a port that
+> factors those six branches into one helper, is `6` vs `1` with identical
+> behaviour. On these two axes compare the **set**, and reconcile any count
+> difference by reading rather than by reporting it.
+
+Two more correspondences on the `signal` axis:
+
+- `notify::selected` in the port against a bare `notify` upstream is the port *narrowing* the connection — strictly better, not a gap. Verify the property is the one upstream's handler acted on.
+- An action whose name never appears as a literal (built from a variable, or from a `create_action('quit', ...)`-style helper) will be absent or unprefixed in the stream on one side only. Read the install site before recording a gap.
 
 ### Step 4 — Confirm the styling actually renders
 
@@ -160,6 +184,17 @@ diff <upstream.css> <port.css>
 Locate them; do not assume a path. The stylesheet may be one file or seven, and
 the port frequently relocates it (`data/resources/style.css` upstream,
 `data/style.css` in the port).
+
+**The port may have no `.css` file at all** — binary-rb keeps its stylesheet as
+a Ruby heredoc loaded with `provider.load(data: STYLE)`. Find it with
+`grep -rn 'CssProvider\|load(data:' <port>` and extract the heredoc to a temp
+file before diffing. An empty `find` on the port side is not evidence of a
+missing stylesheet.
+
+**Variant stylesheets are a separate comparison.** Upstream shipping both
+`style.css` and `style-hc.css` (high contrast) means two diffs: check the port
+loads an equivalent variant and switches to it on the same condition, or record
+its absence as a gap in its own right.
 
 Ports often copy the stylesheet across verbatim — planify-rb's seven files are
 byte-identical to upstream's. When it is, this half of the axis is satisfied

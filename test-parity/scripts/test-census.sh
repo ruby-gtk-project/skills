@@ -34,10 +34,10 @@ testfiles() {
       esac
       case "$f" in
         */test/*|*/tests/*|*/spec/*|*/specs/*|*/Tests/*|*/testing/*) printf '%s\n' "$f"; continue ;;
-        */test_*|*/*_test.*|*/*-test.*|*/test-*|*/*_spec.*|*/spec_*) printf '%s\n' "$f"; continue ;;
+        */test_*|*/*_test.*|*/*_tests.*|*/*-test.*|*/test-*|*/*_spec.*|*/spec_*) printf '%s\n' "$f"; continue ;;
       esac
       # Content fallback for tests living beside the code they cover.
-      grep -qE '#\[([A-Za-z0-9_]+::)*(test|test_case)\]|#\[cfg\(test\)\]|(g_)?[Tt]est(\.|_)add_func' \
+      grep -qE '#\[([A-Za-z0-9_]+::)*(test|test_case)\]|#\[cfg\(test\)\]|(g_)?[Tt]est(\.|_)add_func|^[[:space:]]*(import|from) +(unittest|pytest)' \
         "$f" 2>/dev/null && printf '%s\n' "$f"
     done
 }
