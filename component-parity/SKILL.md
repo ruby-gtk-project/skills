@@ -75,10 +75,13 @@ original on its branch, the port on `ruby`:
 # it is not always `main`, and these forks carry release branches too.
 UP=$(gh api repos/ruby-gtk-project/$REPO --jq '.parent.default_branch')
 
-# Pin the upstream commit the port was actually taken from, not the tip.
-# Otherwise the ledger's "Upstream @ sha" row goes stale every time upstream
-# lands a commit, and gaps appear that the port never had a chance to close.
-BASE=$(git merge-base "origin/$UP" origin/ruby)
+# The `ruby` branch is an ORPHAN branch - it shares no history with upstream,
+# so `git merge-base` returns nothing. There is no commit to derive; the
+# upstream sha has to be recorded rather than computed. Take it from the
+# port's PORTING.md / ledger header if it is written down there, and otherwise
+# use the tip and WRITE IT INTO the ledger, so the next review compares
+# against the same commit instead of a moving target.
+BASE=origin/$UP   # or the sha the ledger already pins
 
 git worktree add --detach ../upstream "$BASE"
 git worktree add --detach ../port     origin/ruby

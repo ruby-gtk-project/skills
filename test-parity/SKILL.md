@@ -56,13 +56,17 @@ gaps does not have test parity.
 
 Work from the upstream branch of the fork — the port's `ruby` branch and the
 original share one repo. The upstream branch is the fork parent's default
-branch, which is not always `main`, and the commit to pin is the one the port
-was taken from, not the tip:
+branch, which is not always `main`:
 
 ```sh
 UP=$(gh api repos/ruby-gtk-project/$REPO --jq '.parent.default_branch')
-BASE=$(git merge-base "origin/$UP" origin/ruby)
 ```
+
+`ruby` is an **orphan** branch — it shares no history with upstream, so
+`git merge-base` returns nothing and there is no commit to derive. Record the
+upstream sha in the ledger header the first time, and compare against that
+recorded sha afterwards; otherwise every upstream commit silently moves the
+target the port is being measured against.
 
 ```sh
 scripts/test-census.sh <upstream-tree> > upstream-tests.tsv
