@@ -54,8 +54,15 @@ gaps does not have test parity.
 
 ### Step 1 — Census the upstream suite
 
-Work from the upstream branch of the fork (the port's `ruby` branch and the
-original share one repo — see `PLAN.md` in `ruby-gtk-project/.github`).
+Work from the upstream branch of the fork — the port's `ruby` branch and the
+original share one repo. The upstream branch is the fork parent's default
+branch, which is not always `main`, and the commit to pin is the one the port
+was taken from, not the tip:
+
+```sh
+UP=$(gh api repos/ruby-gtk-project/$REPO --jq '.parent.default_branch')
+BASE=$(git merge-base "origin/$UP" origin/ruby)
+```
 
 ```sh
 scripts/test-census.sh <upstream-tree> > upstream-tests.tsv
@@ -63,8 +70,16 @@ scripts/test-census.sh <upstream-tree> > upstream-tests.tsv
 
 The script finds test cases across the frameworks GNOME apps use — GLib
 `Test.add_func` (Vala/C), Python `unittest` / `pytest`, GJS Jasmine `it(...)`,
-Rust `#[test]`, Ruby `test_*` / `it`. It emits one row per test:
+Rust `#[test]` and its flavours (`#[tokio::test]`, `#[gtk::test]`) including
+inline `#[cfg(test)] mod tests` in `src/`, Ruby `test_*` / `it` / the house
+`check("...")`. It emits one row per test:
 `file<TAB>identifier<TAB>line`.
+
+Two things it deliberately excludes, so that you do not have to decide:
+**comment lines** (a driver's usage example is not a test case) and **harness
+files** matching `*driver*`, `*helper*`, `*support*`, `*fixture*`, `*conftest*`.
+If a real test lives in a file with one of those names, it is invisible —
+check.
 
 **Read the script's output as a lead, not a verdict.** Then open every test
 file and write down, for each test, what it actually asserts. The identifier is
@@ -74,6 +89,14 @@ thing you are porting; the name is just its handle.
 
 A test whose purpose you cannot state in a sentence has not been censused.
 Do not move on.
+
+**Tests generated in a loop** get one ledger row, not N. `(2..6).each { |n|
+check("on page #{n}") }` is five assertions at runtime and one row here, and
+its identifier cannot be matched back by name because it is interpolated.
+Mirror the *repeater* rule from `component-identification`: one row, the
+identifier written with the interpolation intact (`on page #{page_nr}`), and
+the loop's range stated in the Purpose cell. Step 4's "exists by that name"
+check is then read against the interpolated form.
 
 ### Step 2 — Write the ledger
 
@@ -141,6 +164,39 @@ Parity is proven when all four hold:
 
 Report the numbers, not an adjective. "34/34, suite green" is a claim someone
 can re-run. "Good test coverage" is not.
+
+### When upstream has no tests
+
+Common, and not a licence to skip the skill. GNOME Tour's upstream has zero.
+The ledger degenerates to a header and a statement — do not build empty tables,
+and do not pad the `## Extra` section into a ledger it is not:
+
+```markdown
+# Test parity — gnome-tour
+
+| | |
+|---|---|
+| Upstream | `main` @ `<sha>` |
+| Port | `ruby` @ `<sha>` |
+| Upstream tests | 0 |
+| Ported | 0 |
+| Gaps | 0 |
+
+Upstream has no test suite (verified: no `#[test]`, no `#[cfg(test)]`, no
+`tests/`). Parity is 0/0 and is met trivially. **The port therefore inherits no
+safety net** — every check below was written for the port and pins nothing
+upstream considered worth pinning.
+
+## Extra
+
+- `test/drive_tour.rb` — 71 checks driving the carousel, the page transitions and the skip action.
+- `test/test_load.rb` — 29 checks on the page model and the resource bundle.
+```
+
+`## Extra` is a plain list, one line per file with a count and a sentence. Extra
+rows need no Purpose cell and no bijection — they are outside the count by
+definition. Say the "no safety net" line explicitly; it is the finding, and
+leaving it implied is how a 0/0 report gets read as a pass.
 
 ## Worked example — planify-rb
 

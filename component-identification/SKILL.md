@@ -32,11 +32,22 @@ classes, their signals, and the file they live in.
 grep cannot reconstruct a widget tree, and a running app's tree cannot be
 compared against source. So the inventory is **per file**, with counts.
 
-This is not a compromise made for the tooling — it matches how both sides are
-actually written. Upstream GNOME apps put one component class per `.vala` /
-`.py` / `.ui` file, and the Ruby house style (see the `ruby-gtk` skill) puts one
-component class per file with its widgets as memoized methods. One file is one
-component, and its widgets are that component's parts.
+This roughly matches how both sides are written — the Ruby house style (see the
+`ruby-gtk` skill) puts one component class per file with its widgets as
+memoized methods — but **do not assume one file is one component.** Upstream
+very often splits a single component across two files:
+
+| Upstream | | |
+|---|---|---|
+| `src/widgets/paginator.rs` | the subclass, the `#[template_child]`s, the callbacks | gtk-rs |
+| `data/resources/ui/paginator.ui` | the widget tree, the CSS classes, the signals | GtkBuilder |
+| → `lib/app/paginator.rb` | both halves, in the port | Ruby |
+
+The same holds for a `.py` class beside its `.blp`, or a `.vala` class beside
+its `.ui`. **The component is the set of files, not the file.** Scan per file,
+then union the rows of every upstream file that maps to the same port file
+before comparing anything — otherwise the widget tree is on one side of the
+join and the callbacks on the other, and both look half-missing.
 
 Multiplicity lives in the counts: three `Adw.ActionRow`s in a file is
 `widget  Adw.ActionRow  3`, and a port with two has a gap of one.
@@ -82,6 +93,10 @@ widgets, so they belong under behaviour, not in the widget count.
 - **CSS classes from the stylesheet side.** The app's `.css` files define classes the source may apply indirectly. Read them; a class defined and never applied is dead, and a class applied and never defined is a bug worth reporting either way.
 - **Composite widgets.** A project's own `ItemRow` is a component whose parts are in another file. The inventory records the use *and* follows into the definition.
 - **Bare blueprint declarations.** `ActionRow { }` without its `Adw.` prefix inside a `.blp` is not matched.
+- **App-defined template classes.** `<template class="PaginatorWidget" parent="AdwBin">` gives a row for `Adw.Bin` and none for `PaginatorWidget`, because it is this app's own name, not a GTK type. Every `<child>` that instantiates it is a component whose parts are in the file that defines the template — resolve it, and count the uses.
+- **Widgets from a shared factory.** A private `build_button` called from three memoized methods is one textual occurrence and three widgets on screen. Count the *call sites*, not the constructor. This is the most common way a correct port reads as a gap of two.
+- **Actions whose name is never a literal.** A port that builds `Gio::SimpleAction.new(name)` from a loop over `{'start-tour' => ..., 'next-page' => ...}` installs four actions and puts none of them in the scan, because the prefix (`win.`) is supplied by the widget and the name is a variable. Open every `add_action` / `install_action` / `SimpleAction.new` site and read the names off it. The scan's `action` stream is the least trustworthy of the four for exactly this reason.
+- **Signals connected in a loop or a helper.** Same shape as the factory case: one `connect` in a helper called per row is one row in the scan and N live connections.
 
 ### Step 3 — Write the inventory
 
@@ -110,6 +125,11 @@ A whole-app inventory of a large GNOME app is thousands of rows and nobody
 reads it. Identify components **one unit at a time** — one window, one dialog,
 one page, as `PLAN.md` defines a unit — and the inventory stays the size of
 the thing being ported.
+
+Absent a `PLAN.md` (see below), take a unit to be **one top-level widget class**
+— one `.ui`/`.blp` template, one `impl ObjectSubclass` block, one `GtkWidget`
+subclass — together with the source file that backs it and the port file that
+corresponds to it.
 
 The exception is the opening survey of a fresh fork, where the totals are the
 point:

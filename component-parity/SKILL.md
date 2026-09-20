@@ -71,7 +71,16 @@ Use the `component-identification` skill on the upstream tree and on the port's
 original on its branch, the port on `ruby`:
 
 ```sh
-git worktree add --detach ../upstream origin/main
+# The fork's upstream branch is whatever the parent's default branch is -
+# it is not always `main`, and these forks carry release branches too.
+UP=$(gh api repos/ruby-gtk-project/$REPO --jq '.parent.default_branch')
+
+# Pin the upstream commit the port was actually taken from, not the tip.
+# Otherwise the ledger's "Upstream @ sha" row goes stale every time upstream
+# lands a commit, and gaps appear that the port never had a chance to close.
+BASE=$(git merge-base "origin/$UP" origin/ruby)
+
+git worktree add --detach ../upstream "$BASE"
 git worktree add --detach ../port     origin/ruby
 component-scan.sh ../upstream > up.tsv
 component-scan.sh ../port     > port.tsv
@@ -86,10 +95,24 @@ wrongly, which is precisely where ports go thin.
 Before comparing anything, write the file mapping for the unit:
 
 ```
-core/Widgets/ItemRow.vala          -> lib/planify/widgets/item_row.rb
-core/Widgets/ItemRow.vala (menu)   -> lib/planify/widgets/item_menu.rb
-src/Dialogs/Preferences/*.vala     -> lib/planify/dialogs/preferences.rb
+src/widgets/paginator.rs + data/resources/ui/paginator.ui -> lib/app/paginator.rb
+core/Widgets/ItemRow.vala                                 -> lib/app/widgets/item_row.rb
+src/Dialogs/Preferences/*.vala                            -> lib/app/dialogs/preferences.rb
 ```
+
+**The mapping is many-to-many, and usually 2→1.** Upstream splits a component
+across its source file and its `.ui`/`.blp` template; the port merges both into
+one Ruby file. So before joining anything, *union the rows of every upstream
+file on the left of an arrow*:
+
+```sh
+awk -F'\t' -v u="src/widgets/paginator.rs|data/resources/ui/paginator.ui" \
+  '$1 ~ u {k[$2 FS $3] += $4} END {for (x in k) print x FS k[x]}' up.tsv | sort
+```
+
+Compare that union against the port file's rows. Joining file-to-file instead
+puts the widget tree on one side and the callbacks on the other, and reports
+both halves as missing.
 
 An upstream file with no port file opposite it is the first and largest kind of
 gap, and it is found here rather than in any diff.
@@ -127,16 +150,28 @@ Diff the two stylesheets directly — they are both plain CSS, and this is the o
 place where the two sides can be compared literally:
 
 ```sh
-diff -r ../upstream/data/resources/stylesheet ../port/data/resources/stylesheet
+find ../upstream ../port -name '*.css' -not -path '*/.git/*'
+diff <upstream.css> <port.css>
 ```
 
-Ports often copy the stylesheet across verbatim — planify-rb's is byte-identical
-to upstream's. When it is, this half of the axis is satisfied for free, and the
-whole CSS question collapses to the one the scan answers: which of those classes
-does the port actually *attach* to a widget. A copied stylesheet is not
-evidence of style parity; it is the reason style gaps in these ports are
-attachment gaps, and it makes the `css` stream the axis to read closely rather
-than the one to skip.
+Locate them; do not assume a path. The stylesheet may be one file or seven, and
+the port frequently relocates it (`data/resources/style.css` upstream,
+`data/style.css` in the port).
+
+Ports often copy the stylesheet across verbatim — planify-rb's seven files are
+byte-identical to upstream's. When it is, this half of the axis is satisfied
+for free, and the whole CSS question collapses to the one the scan answers:
+which of those classes does the port actually *attach* to a widget. A copied
+stylesheet is not evidence of style parity; it is the reason style gaps in
+these ports are attachment gaps, and it makes the `css` stream the axis to read
+closely rather than the one to skip.
+
+**Differences that are correspondences, not gaps.** The rule is that a rule
+which *differs* is a gap — but judge the rendered result, not the text:
+
+- **Asset URIs.** `url('/org/gnome/Tour/hand-fg.svg')` (a GResource path) against `url('@ASSETS@/hand-fg.svg')` (substituted at build time) is the same rule. gnome-tour-rb differs from upstream on exactly these two lines and has full style parity.
+- **Build-time tokens** — `@ASSETS@`, `@datadir@`, `@APP_ID@` — resolve before the CSS is loaded. Resolve them by hand before comparing.
+- **Adwaita named colours** — `@accent_bg_color` against a hex literal is a real difference: the named colour follows the user's theme and the literal does not.
 
 Then run the port and look. Screenshot the unit with the `ruby-gtk-testing`
 skill and compare against the original running. Colour, spacing and weight are
