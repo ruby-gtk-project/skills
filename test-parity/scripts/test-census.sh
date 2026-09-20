@@ -29,8 +29,12 @@ testfiles() {
     \( -name '*.vala' -o -name '*.c' -o -name '*.py' -o -name '*.js' \
        -o -name '*.ts' -o -name '*.rs' -o -name '*.rb' -o -name '*.cpp' \) 2>/dev/null \
   | while IFS= read -r f; do
-      case "$f" in
-        */gtk_driver.*|*driver*|*helper*|*support*|*fixture*|*conftest*) continue ;;
+      base=${f##*/}
+      case "$base" in
+        # An explicit test suffix always wins over the harness blocklist -
+        # `helpers.test.js` is a test file, `helpers.js` is a harness.
+        *.test.*|*_test.*|*-test.*|test_*|test-*|*.spec.*|*_spec.*) ;;
+        *driver*|*helper*|*support*|*fixture*|*conftest*) continue ;;
       esac
       case "$f" in
         */test/*|*/tests/*|*/spec/*|*/specs/*|*/Tests/*|*/testing/*) printf '%s\n' "$f"; continue ;;
@@ -97,10 +101,23 @@ for tree in "$@"; do
         tmp=$(mktemp); sed 's/^[[:space:]]*#.*//' "$f" > "$tmp"
         emit "$rel" "$tmp" '^[[:space:]]*def +test_[A-Za-z0-9_?!]*' 's/.*def +//'
         emit "$rel" "$tmp" "^[[:space:]]*it +['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/"
-        emit "$rel" "$tmp" "(^|[^A-Za-z_.])(d\\.)?check\\( *['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/"
-        emit "$rel" "$tmp" "^[[:space:]]*(d\.)?step *\(? *['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/"
+        # check(...) / step(...), including the very common form that breaks
+        # the name onto the next line. Tracked like the C and Rust scanners.
+        awk -v F="$rel" '
+          BEGIN { Q = sprintf("%c", 39) }
+          {
+            if (!open && match($0, /(^|[^A-Za-z_.])(d\.)?(check|step)[[:space:]]*\(/)) {
+              open = 1; rest = substr($0, RSTART + RLENGTH)
+            } else if (open) rest = $0
+            if (open) {
+              if (match(rest, "[\"" Q "][^\"" Q "]+[\"" Q "]")) {
+                print F "\t" substr(rest, RSTART + 1, RLENGTH - 2) "\t" NR
+                open = 0
+              } else if (rest ~ /\)/) open = 0
+            }
+          }' "$tmp"
         rm -f "$tmp" ;;
     esac
   done
-done | grep -vF '#{' | sort -u
+done | sort -u
 :

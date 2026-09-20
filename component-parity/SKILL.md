@@ -67,11 +67,13 @@ somewhere" is not a finding.
 ### Step 1 — Inventory both sides
 
 Use the `component-identification` skill on the upstream tree and on the port's
-`ruby` branch, scoped to the same unit. **Start with its Step 1**: find
-upstream's `.blp`/`.ui` files before anything else. Their `<template>` roots
-are the unit list and the file mapping of Step 2 below, handed to you for free
-— and since the port has no declarative UI by design, they are the only place
-the two sides' component boundaries are written down explicitly. Both trees live in the same fork — the
+`ruby` branch, scoped to the same unit. **Start with its Step 1**, and run it on **both** trees: find the `.blp`/`.ui`
+files before anything else. Upstream's `<template>` roots are the unit list and
+the file mapping of Step 2 below, handed to you for free. The port *usually*
+has none — the house style builds widgets as memoized methods — but a bindings
+gap can force one: Commit-rb keeps `shortcuts-window.ui` and
+`theme-selector.ui` because `GtkShortcutsWindow` cannot be constructed from
+Ruby. Do not assume the port side is empty; look. Both trees live in the same fork — the
 original on its branch, the port on `ruby`:
 
 ```sh
@@ -118,13 +120,14 @@ union() {   # union <tsv> <anchored ERE over paths>
   awk -F'\t' -v u="$2" '$1 ~ "^(" u ")$" {k[$2 FS $3] += $4}
                          END {for (x in k) print x FS k[x]}' "$1" | sort
 }
-union up.tsv   'src/window\.py|src/window\.blp'
-union port.tsv 'lib/window\.rb|lib/conversion_row\.rb'
+union up.tsv   'src/window\\.py|src/window\\.blp'
+union port.tsv 'lib/window\\.rb|lib/conversion_row\\.rb'
 ```
 
-The second argument is an **ERE, not a path list** — escape the dots and let
-the function anchor it. Unescaped, `src/kgx-spad\.c` written as `src/kgx-spad.c`
-also matches `src/kgx-spad-source.c`, silently folding two components into one.
+The second argument is an **ERE, not a path list**, and it reaches awk as a
+*string* — so a dot needs `\\.`, two backslashes. With one (`\.`) awk prints
+`warning: escape sequence '\.' treated as plain '.'` and matches any character,
+which is how `src/a\.c` silently also folds in `src/abc`.
 
 Union **both** sides — the mapping is often 2→2, not 2→1, because the port
 factors a block that upstream repeats inline into its own file.
@@ -164,6 +167,13 @@ Read the result as three questions, in this order:
 
 Then the same over `css`, `css-name`, `signal` and `action` — but read their
 counts differently:
+
+> **`controller` rows are compared on the signal axis, not the widget axis.**
+> A `Gtk.GestureLongPress` upstream with nothing opposite it in the port is a
+> missing interaction, not a missing widget. **`type` rows** (models, buffers,
+> filters, adjustments) are compared as data plumbing: the port may reach the
+> same behaviour with plain Ruby and no GObject model at all, which is a
+> correspondence — say where the behaviour lives instead.
 
 > **Only the `widget` stream's counts are per-instance.** A `css` or `signal`
 > count is the number of *attachment sites* in the text. Upstream calling
@@ -219,6 +229,7 @@ which *differs* is a gap — but judge the rendered result, not the text:
 - **Asset URIs.** `url('/org/gnome/Tour/hand-fg.svg')` (a GResource path) against `url('@ASSETS@/hand-fg.svg')` (substituted at build time) is the same rule. gnome-tour-rb differs from upstream on exactly these two lines and has full style parity.
 - **Build-time tokens** — `@ASSETS@`, `@datadir@`, `@APP_ID@` — resolve before the CSS is loaded. Resolve them by hand before comparing.
 - **Adwaita named colours** — `@accent_bg_color` against a hex literal is a real difference: the named colour follows the user's theme and the literal does not.
+- **Platform classes are not undefined.** `flat`, `circular`, `suggested-action`, `destructive-action`, `devel`, `card`, `frame`, `view`, `dim-label`, `title-1..4`, `heading`, `monospace`, `numeric`, `pill`, `osd`, `boxed-list`, `accent`/`warning`/`error`/`success` are defined by GTK and libadwaita, not by either stylesheet. Never report them as missing a rule — only app-namespaced classes need one in the port's stylesheet.
 - **Element names against classes.** `gtk_widget_class_set_css_name (klass, "kgx-tab")` makes upstream's selector `kgx-tab { }` — an *element* selector. A Ruby port has no GType to hang a css name on and re-expresses these as classes: `.console-rb-tab { }`. That is a correspondence, not a gap. The scan puts them in their own `css-name` stream for exactly this reason: compare `css-name` upstream against `css` in the port, record the name→class mapping once per unit, and compare the rule bodies. Comparing the two streams directly reports every one of them twice — once missing, once extra.
 
 Then run the port and look. Screenshot the unit with the `ruby-gtk-testing`
@@ -284,7 +295,7 @@ Among the 74 missing widget types, `Adw.NavigationView`, `Adw.NavigationPage`,
 `Adw.BottomSheet` and `Adw.PasswordEntryRow` are whole navigation and
 credential flows absent from the port. `Adw.Easing` and
 `Adw.DialogPresentationMode` in the same list are enums, not widgets — strike
-them, per `component-identification` Step 3.
+them, per `component-identification` Step 4.
 
 ## Rules
 

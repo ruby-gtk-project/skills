@@ -2,7 +2,10 @@
 # Inventory the UI components of a GTK app, per file.
 #
 # Output: <file>\t<kind>\t<value>\t<count>
-#   kind = widget   a Gtk/Adw type instantiated or declared in that file
+#   kind = widget   a type that subclasses Gtk.Widget - a thing on screen
+#          controller an EventController/Gesture - behaviour, not a widget
+#          type      a known GTK class that is NOT a widget (model, buffer,
+#                    filter, provider, layout manager, enum, record)
 #          css      a CSS class attached to a widget in that file
 #          css-name a GTK element name (set_css_name) - an element selector,
 #                   not a class selector; compare against the port's classes
@@ -24,6 +27,31 @@ set -uo pipefail
 
 [ $# -eq 1 ] || { echo "usage: $(basename "$0") <tree>" >&2; exit 2; }
 TREE=${1%/}
+
+# The symbol table from gir-symbols.sh, if one has been built. With it, the
+# widget stream is classified against what GTK actually declares instead of a
+# hand-kept strike list: Gtk.Adjustment, Gtk.StackPage and Gtk.TextTag are real
+# classes that are not widgets, and no regex can know that. Without it every
+# matched type stays `widget` and you strike them by reading (see the skill).
+SYMBOLS=${SYMBOLS:-"$(dirname "$0")/symbols.tsv"}
+
+classify() {
+  if [ -s "$SYMBOLS" ]; then
+    awk -F'\t' -v S="$SYMBOLS" '
+      BEGIN { while ((getline line < S) > 0) { split(line, a, "\t"); k[a[1]] = a[2] } }
+      $2 == "widget" && ($3 in k) {
+        t = k[$3]
+        if (t == "widget")          print
+        else if (t == "controller") print $1 "\tcontroller\t" $3 "\t" $4
+        else                        print $1 "\ttype\t" $3 "\t" $4
+        next
+      }
+      { print }   # unknown symbol: left as widget, conservatively
+    '
+  else
+    cat
+  fi
+}
 
 srcfiles() {
   find "$TREE" -type f \
@@ -56,7 +84,7 @@ grep -rhoE '#define[[:space:]]+[A-Z][A-Z0-9_]*[[:space:]]+"[^"]+"' $(srcfiles) 2
   | sed -E 's/#define[[:space:]]+([A-Z][A-Z0-9_]*)[[:space:]]+"([^"]+)"/\1\t\2/' \
   | sort -u > "$MACROMAP"
 
-srcfiles | while IFS= read -r f; do
+srcfiles | { while IFS= read -r f; do
   rel=${f#"$TREE"/}
 
   # --- widgets -------------------------------------------------------------
@@ -66,7 +94,7 @@ srcfiles | while IFS= read -r f; do
   {
     # GtkBuilder objects AND template roots: <template parent="AdwBin">.
     # An app-defined template class (class="MyWidget") is deliberately not a
-    # row - resolve it to the file that defines it. See the skill, Step 3.
+    # row - resolve it to the file that defines it. See the skill, Step 4.
     grep -ohE '(class|parent)="(Adw|Gtk|Vte|GtkSource|Shumate|WebKit|Panel)[A-Za-z0-9]+"' "$f" 2>/dev/null \
       | sed -E 's/.*"(Adw|Gtk|Vte|GtkSource|Shumate|WebKit|Panel)([A-Za-z0-9]+)"/\1.\2/'
     # Vala, Python, GJS, blueprint: Adw.ActionRow
@@ -123,12 +151,12 @@ srcfiles | while IFS= read -r f; do
     # where the widget comes first. Take the first quoted string either way.
     # remove_css_class counts too: a class a widget takes off is a class it
     # can wear, and the port needs the same state.
-    grep -ohE '(add|remove)_css_class *\([^;]*"[^"]+"' "$f" 2>/dev/null \
+    grep -ohE '(add|remove)_(css_)?class *\([^;]*"[^"]+"' "$f" 2>/dev/null \
       | sed 's/^[^"]*"//; s/".*$//'
-    grep -ohE "(add|remove)_css_class *\([^;]*'[^']+'" "$f" 2>/dev/null \
+    grep -ohE "(add|remove)_(css_)?class *\([^;]*'[^']+'" "$f" 2>/dev/null \
       | sed "s/^[^']*'//; s/'.*\$//"
     # ... and the same call taking a #define'd constant instead of a literal.
-    grep -ohE '(add|remove)_css_class *\([^;]*,[[:space:]]*[A-Z][A-Z0-9_]+' "$f" 2>/dev/null \
+    grep -ohE '(add|remove)_(css_)?class *\([^;]*,[[:space:]]*[A-Z][A-Z0-9_]+' "$f" 2>/dev/null \
       | sed -E 's/.*,[[:space:]]*//' \
       | while IFS= read -r macro; do
           awk -F'\t' -v m="$macro" '$1 == m { print $2 }' "$MACROMAP"
@@ -157,11 +185,18 @@ srcfiles | while IFS= read -r f; do
   {
     # GtkBuilder: <signal name="clicked" handler="on_clicked"/>
     grep -ohE '<signal +name="[^"]+"' "$f" 2>/dev/null | sed 's/^[^"]*"//; s/"$//'
-    # Vala / C / Python / JS: foo.clicked.connect (...)
-    grep -ohE '\.[a-z][a-z0-9_]*\.connect *\(' "$f" 2>/dev/null \
-      | sed -E 's/^\.//; s/\.connect *\($//'
-    # connect("clicked", ...) / connect_after('clicked')
-    grep -ohE 'connect(_after|_object)? *\( *"[^"]+"' "$f" 2>/dev/null | sed 's/^[^"]*"//; s/"$//'
+    # Vala only: foo.clicked.connect (...). In GJS and Python the same shape
+    # is `this.style_manager.connect("notify::dark")`, where the middle token
+    # is a property, not a signal - applying this rule there invents signals.
+    case "$f" in *.vala)
+      grep -ohE '\.[a-z][a-z0-9_]*\.connect *\(' "$f" 2>/dev/null \
+        | sed -E 's/^\.//; s/\.connect *\($//' ;;
+    esac
+    # connect("clicked", ...) / connect_after('clicked'). The leading
+    # [^_a-z] guard keeps Ruby's signal_connect out, which the rule below
+    # already handles - without it every Ruby signal is counted twice.
+    grep -ohE "(^|[^_a-z])connect(_after|_object)? *\( *[\"'][^\"']+" "$f" 2>/dev/null \
+      | sed -E "s/.*[\"']//"
     # Ruby: signal_connect("notify::position") - the detail is part of the
     # signal, so ':' stays inside the character class.
     grep -ohE "signal_connect(_after)? *\(? *[:\"'][A-Za-z0-9_:.-]+" "$f" 2>/dev/null \
@@ -170,7 +205,7 @@ srcfiles | while IFS= read -r f; do
     grep -ohE 'connect_notify(_local)? *\( *Some\( *"[^"]+"' "$f" 2>/dev/null \
       | sed 's/^[^"]*"//; s/"$//; s/^/notify::/'
     grep -ohE '\bconnect_[a-z0-9_]+ *\(' "$f" 2>/dev/null \
-      | grep -vE 'connect_notify' | sed -E 's/^connect_//; s/ *\($//'
+      | grep -vE 'connect_(notify|after|object)\b' | sed -E 's/^connect_//; s/ *\($//'
     # C: g_signal_connect (obj, "clicked", ...) - the name is very often on
     # the continuation line, so track the open paren rather than the line.
     awk '/g_signal_connect[a-z_]*[[:space:]]*\(/ { s = 1 }
@@ -190,16 +225,25 @@ srcfiles | while IFS= read -r f; do
   {
     # Any prefix, not just app./win. - a widget action group can be called
     # anything, and kgx uses term., tab. and spad. for most of its actions.
-    grep -ohE "['\"][a-z][a-z0-9-]*\.[a-z0-9_-]+['\"]" "$f" 2>/dev/null | tr -d "\"'"
-    grep -ohE '>[a-z][a-z0-9-]*\.[a-z0-9_-]+<' "$f" 2>/dev/null | tr -d '><'
+    # Matched only in an action CONTEXT: a bare prefixed literal anywhere is
+    # just as often a filename (`addp-hunk-edit.diff`, `gschemas.compiled`),
+    # and no extension blocklist is ever complete.
+    grep -ohE "(action[_-]?name|activate_action|accels_for_action|install_action|add_action|SimpleAction|action_target|action:|\baction\b)[^;]*['\"][a-z][a-z0-9-]*\.[a-z0-9_-]+['\"]" "$f" 2>/dev/null \
+      | grep -ohE "['\"][a-z][a-z0-9-]*\.[a-z0-9_-]+['\"]" | tr -d "\"'"
+    grep -ohE '<property +name="action-name"[^>]*>[^<]+' "$f" 2>/dev/null | sed 's/.*>//'
+    # GJS: new Gio.SimpleAction({ name: "cancel" }) - the name is a property
+    # on the next line, so track the open paren.
+    awk '/new +G(io|object)?\.SimpleAction *\(|Gio\.SimpleAction\.new *\(/ { s = 1 }
+         s { if (match($0, /name: *["'"'"'][^"'"'"']+/)) {
+               v = substr($0, RSTART, RLENGTH); sub(/name: *["'"'"']/, "", v)
+               print v; s = 0
+             } else if (/\);/) s = 0 }' "$f" 2>/dev/null
+
     # Bare names at an install site: the widget supplies the prefix.
     grep -ohE '(SimpleAction\.new|install_action|add_action|create_action|lookup_action|action_name) *[(=:][^)]*["'"'"'][A-Za-z0-9_.-]+' \
       "$f" 2>/dev/null | sed -E 's/.*["'"'"']//'
-  } | awk -F. 'NF <= 2' \
-    | grep -vE '\.(css|ui|blp|svg|png|xml|json|in|rb|py|c|h|vala|desktop|gresource|po|mo|txt|md|sh|yml|gz|html|js)$' \
-    | grep -vE '^(org|com|io|net|www|gnome|gtk|glib|self|this|e|g)\.' \
-    | tally "$rel" action
+  } | awk -F. 'NF <= 2' | grep -vE '^(org|com|io|net|www)\.' | tally "$rel" action
 
   :
-done
+done; } | classify
 :

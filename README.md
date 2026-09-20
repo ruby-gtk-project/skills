@@ -51,6 +51,7 @@ their scan over- and under-reports.
 
 ```sh
 test-parity/scripts/test-census.sh <tree>              # file, test id, line
+component-identification/scripts/gir-symbols.sh > scripts/symbols.tsv        # once: the GTK symbol table
 component-identification/scripts/component-scan.sh <tree>  # file, kind, value, count
 ```
 

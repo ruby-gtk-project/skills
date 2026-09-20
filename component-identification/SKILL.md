@@ -84,6 +84,19 @@ grep -hE '<template class="[^"]+" parent="[^"]+"|^template +\$?[A-Za-z]+ *:' \
   $(find <tree> -name '*.ui' -o -name '*.blp')
 ```
 
+**Not every declarative root is a `template`.** GJS/blueprint apps commonly
+declare a **top-level named object** instead, loaded by a builder helper and
+destructured by id — `Adw.ApplicationWindow window { }` at column 0. On
+Commit's upstream, four of five units are written that way and only one uses
+`template`, so matching templates alone finds 20% of the app:
+
+```sh
+grep -hE '^[A-Z][A-Za-z0-9.]* +[a-z_][A-Za-z0-9_]* *\{' <blp files>   # named roots
+```
+
+Cross-check the unit list against the source files that `import`/`include` each
+`.blp` or `.ui`.
+
 **What this does not cover, and when to skip it.** A declarative file shows
 what is built at startup; it cannot show widgets added at runtime, conditional
 branches, or anything the source builds directly. And some upstreams have no
@@ -97,7 +110,42 @@ methods). So:
 Either way the scan is still run on both sides, because the comparison in
 `component-parity` needs the same TSV shape from each.
 
-### Step 2 — Scan
+### Step 2 — Build the symbol table, then scan
+
+Deciding whether `Adw.Easing` is a widget is not a judgement call — GTK already
+declares the answer. Build the table once from GObject-Introspection and the
+scan classifies against it:
+
+```sh
+scripts/gir-symbols.sh > scripts/symbols.tsv    # once per machine
+scripts/component-scan.sh <tree> > components.tsv
+```
+
+`gir-symbols.sh` reads the `.gir` XML that ships with GTK, libadwaita, VTE,
+GtkSourceView and friends, walks each class's parent chain, and writes
+`Ns.Name<TAB>kind`:
+
+| kind | Means | Examples |
+|---|---|---|
+| `widget` | subclasses `Gtk.Widget` — a thing on screen | `Gtk.Button`, `Adw.ActionRow` |
+| `controller` | subclasses `Gtk.EventController`/`Gtk.Gesture` | `Gtk.GestureClick`, `Gtk.EventControllerKey` |
+| `type` | a real GTK class that is **not** a widget | `Gtk.Adjustment`, `Gtk.StackPage`, `Gtk.TextTag`, `Gtk.EntryBuffer` |
+| `enum` / `record` / `iface` | not objects at all | `Gtk.Orientation`, `Adw.Easing` |
+
+This is the authority. A hand-kept strike list never finishes and differs per
+app; `Gtk.Adjustment`, `Gtk.StackPage` and `Gtk.TextTag` are all genuine GTK
+classes that no regex can distinguish from `Gtk.Button`.
+
+**Build it in an environment that has the app's own dependencies** — the port's
+`nix develop` shell, or after installing its `-dev` packages. A library whose
+`.gir` is absent produces no rows, and its types stay classified `widget`
+conservatively; that is how `GtkSource.Buffer` ends up in the widget stream on
+a machine without GtkSourceView installed.
+
+Without a symbol table the scan still runs, everything matched stays `widget`,
+and you strike by reading — see the fallback table in Step 3.
+
+### Step 3 — Scan
 
 ```sh
 scripts/component-scan.sh <tree> > components.tsv
@@ -117,14 +165,17 @@ tree, so two scans diff directly. `Adwaita::ActionRow` (Ruby),
 `Adw.ActionRow` (Vala/blueprint) and `class="AdwActionRow"` (GtkBuilder) all
 normalise to `Adw.ActionRow`.
 
-### Step 3 — Read the files
+### Step 4 — Read the files
 
 The scan is a lead, not a verdict. It matches text, so it over-reports and
 under-reports in known ways, and every one of them needs a human decision:
 
-**Over-reports.** Plenty of namespaced names are not widgets. On a
-GtkBuilder-heavy tree this is around a third of the `widget` stream, so strike
-by category rather than case by case:
+**Over-reports.** Plenty of namespaced names are not widgets — on a
+GtkBuilder-heavy tree, around a third of what the regexes match. **With a
+symbol table this is already done for you**: those rows arrive as kind `type`,
+`controller`, `enum` or `record` and never reach the widget count. What
+follows is the fallback for when no symbol table could be built, and a
+description of what the classifier is doing:
 
 | Strike | Examples |
 |---|---|
@@ -133,11 +184,17 @@ by category rather than case by case:
 | Models and buffers | `Gtk.EntryBuffer`, `Gtk.TextBuffer`, `*Filter`, `*ListModel`, `*Selection`, `Gtk.Adjustment` |
 | Layout managers | `Gtk.BoxLayout`, `Adw.ClampLayout` |
 | Singletons and helpers | `Adw.StyleManager`, `Gtk.Builder`, `Adw.TimedAnimation`, `Adw.CallbackAnimationTarget` |
+| Tags, providers and themes | `Gtk.TextTag`, `Gtk.CssProvider`, `Gtk.StyleProvider`, `Gtk.StyleContext`, `Gtk.IconTheme` |
 
 **Event controllers and gestures are the exception** — `Gtk.EventControllerKey`,
 `Gtk.GestureClick`, `Gtk.ShortcutController` are not widgets, but they *are*
-behaviour, and dropping them loses a whole class of interaction. Move them onto
-the signal axis of the widget they are attached to rather than striking them.
+behaviour, and dropping them loses a whole class of interaction. The classifier
+gives them their own `controller` kind for this reason: compare them on the
+signal axis of the widget they are attached to, never in the widget count.
+
+**A symbol the table does not know stays `widget`.** That is deliberate — an
+unknown name is more likely an app's own widget class than a mistake — but it
+means an unclassified row is a row you still have to read.
 
 `Gtk.Template`, `Gtk.Template.Child` and `Gtk.Template.Callback` are PyGObject
 template plumbing and are filtered by the script, but the widgets they stand
@@ -154,6 +211,8 @@ widgets, so they belong under behaviour, not in the widget count.
 - **Composite widgets.** A project's own `ItemRow` is a component whose parts are in another file. The inventory records the use *and* follows into the definition.
 - **Bare blueprint declarations.** `ActionRow { }` without its `Adw.` prefix inside a `.blp` is not matched.
 - **CSS classes behind a C macro.** `gtk_widget_add_css_class (w, KGX_WINDOW_STYLE_ROOT)` names nothing readable. The script resolves `#define NAME "value"` across the tree, including from `.h` files — but only single-token literal defines. A class assembled at runtime (`g_strdup_printf`) still needs reading.
+- **Widgets from a submodule or a vendored library.** Read `.gitmodules` and every `import ... from '../<submodule>/...'`. Commit's `ThemeSelector` — three `Gtk.CheckButton`s, an action and 52 lines of CSS — lives in the `troll/` submodule, so it produces no upstream rows at all, and the port's faithful copy then reads as an unexplained extra plus a stylesheet gap. If the submodule is not checked out the scan cannot see it; scan it separately and union its rows into the importing file's.
+- **Menu models.** A blueprint `menu app-menu { section { item { ... } } }` or a GtkBuilder `<menu>` is all lowercase keywords, so it produces nothing. Count the `item` entries, and record every `custom:` slot as a component boundary — it hosts a widget built in source.
 - **Widgets from libraries other than GTK and libadwaita.** The scan knows `Vte`, `GtkSource`, `Shumate`, `WebKit` and `Panel` as well as `Gtk`/`Adw`, but an app embedding anything else — a map view, a chart widget, a custom C library — produces no row for it. Read the `.ui` `parent=` attributes and the build file's dependencies to find out which libraries are in play before trusting the widget stream.
 - **App-defined widgets used as parents.** `<template class="KgxSimpleTab" parent="KgxTab">` means this app subclasses its own widget. Neither name is a GTK type, so neither is a row — but the inheritance is real and the port has to reproduce it. Template roots whose `parent=` is an app class are a component hierarchy; map it before comparing anything.
 - **App-defined template classes.** `<template class="PaginatorWidget" parent="AdwBin">` gives a row for `Adw.Bin` and none for `PaginatorWidget`, because it is this app's own name, not a GTK type. Every `<child>` that instantiates it is a component whose parts are in the file that defines the template — resolve it, and count the uses.
@@ -161,7 +220,7 @@ widgets, so they belong under behaviour, not in the widget count.
 - **Actions whose name is never a literal.** A port that builds `Gio::SimpleAction.new(name)` from a loop over `{'start-tour' => ..., 'next-page' => ...}` installs four actions and puts none of them in the scan, because the prefix (`win.`) is supplied by the widget and the name is a variable. Open every `add_action` / `install_action` / `SimpleAction.new` site and read the names off it. The scan's `action` stream is the least trustworthy of the four for exactly this reason.
 - **Signals connected in a loop or a helper.** Same shape as the factory case: one `connect` in a helper called per row is one row in the scan and N live connections.
 
-### Step 4 — Write the inventory
+### Step 5 — Write the inventory
 
 One `## <file>` section per component file, in the order a user meets them
 (window, then its pages, then its dialogs — not alphabetical):
