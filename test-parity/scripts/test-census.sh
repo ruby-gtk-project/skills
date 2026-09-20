@@ -61,7 +61,12 @@ for tree in "$@"; do
     case "$f" in
       # GLib test framework: Test.add_func ("/suite/case", ...) / g_test_add_func
       *.vala|*.c|*.cpp)
-        emit "$rel" "$f" '(g_)?[Tt]est(\.|_)add(_data)?(_func)? *\( *"[^"]+"' 's/^[^"]*"//; s/"$//' ;;
+        # g_test_add_func / g_test_add / g_test_add_data_func, AND any
+        # project-local wrapper around them - kgx registers 20 of its cases
+        # through `fixtured_test ("/kgx/settings/...", ...)`. A GLib test path
+        # always begins with '/', which makes the wrapper form matchable
+        # without knowing its name.
+        emit "$rel" "$f" '[A-Za-z_][A-Za-z_0-9]* *\( *"/[^"]+"' 's/^[^"]*"//; s/"$//' ;;
 
       # unittest methods and pytest functions. Comment lines are blanked first
       # (line numbering preserved) so a usage example in a docstring-adjacent
