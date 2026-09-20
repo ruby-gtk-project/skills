@@ -114,12 +114,17 @@ one Ruby file. So before joining anything, *union the rows of every upstream
 file on the left of an arrow*:
 
 ```sh
-union() {   # union <tsv> <file1|file2|...>
-  awk -F'\t' -v u="$2" '$1 ~ u {k[$2 FS $3] += $4} END {for (x in k) print x FS k[x]}' "$1" | sort
+union() {   # union <tsv> <anchored ERE over paths>
+  awk -F'\t' -v u="$2" '$1 ~ "^(" u ")$" {k[$2 FS $3] += $4}
+                         END {for (x in k) print x FS k[x]}' "$1" | sort
 }
-union up.tsv   "src/window.py|src/window.blp"
-union port.tsv "lib/window.rb|lib/conversion_row.rb"
+union up.tsv   'src/window\.py|src/window\.blp'
+union port.tsv 'lib/window\.rb|lib/conversion_row\.rb'
 ```
+
+The second argument is an **ERE, not a path list** — escape the dots and let
+the function anchor it. Unescaped, `src/kgx-spad\.c` written as `src/kgx-spad.c`
+also matches `src/kgx-spad-source.c`, silently folding two components into one.
 
 Union **both** sides — the mapping is often 2→2, not 2→1, because the port
 factors a block that upstream repeats inline into its own file.
@@ -157,8 +162,8 @@ Read the result as three questions, in this order:
   explained, because an unexplained extra is usually a widget standing in for
   one that was not understood.
 
-Then the same over `css`, `signal` and `action` — but read their counts
-differently:
+Then the same over `css`, `css-name`, `signal` and `action` — but read their
+counts differently:
 
 > **Only the `widget` stream's counts are per-instance.** A `css` or `signal`
 > count is the number of *attachment sites* in the text. Upstream calling
@@ -214,6 +219,7 @@ which *differs* is a gap — but judge the rendered result, not the text:
 - **Asset URIs.** `url('/org/gnome/Tour/hand-fg.svg')` (a GResource path) against `url('@ASSETS@/hand-fg.svg')` (substituted at build time) is the same rule. gnome-tour-rb differs from upstream on exactly these two lines and has full style parity.
 - **Build-time tokens** — `@ASSETS@`, `@datadir@`, `@APP_ID@` — resolve before the CSS is loaded. Resolve them by hand before comparing.
 - **Adwaita named colours** — `@accent_bg_color` against a hex literal is a real difference: the named colour follows the user's theme and the literal does not.
+- **Element names against classes.** `gtk_widget_class_set_css_name (klass, "kgx-tab")` makes upstream's selector `kgx-tab { }` — an *element* selector. A Ruby port has no GType to hang a css name on and re-expresses these as classes: `.console-rb-tab { }`. That is a correspondence, not a gap. The scan puts them in their own `css-name` stream for exactly this reason: compare `css-name` upstream against `css` in the port, record the name→class mapping once per unit, and compare the rule bodies. Comparing the two streams directly reports every one of them twice — once missing, once extra.
 
 Then run the port and look. Screenshot the unit with the `ruby-gtk-testing`
 skill and compare against the original running. Colour, spacing and weight are

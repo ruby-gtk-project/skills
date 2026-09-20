@@ -80,6 +80,21 @@ inline `#[cfg(test)] mod tests` in `src/`, Ruby `test_*` / `it` / the house
 `check("...")`. It emits one row per test:
 `file<TAB>identifier<TAB>line`.
 
+**Decide which call is this suite's assertion unit before you trust the count.**
+`check`, `step`, `assert` and `it` are conventions, not contracts. The script
+collects both `check(...)` and `step(...)` from a Ruby driver, which
+double-counts a suite that uses them as grouping plus assertion, and undercounts
+one where `check` is only ever called from inside a helper. Open the driver and
+find the call that increments the pass counter:
+
+```sh
+grep -nE 'def (check|step)|failures? *\+?=' <port>/test/*.rb
+```
+
+console-rb names all 71 of its cases on `step` and calls `check` once, from a
+rescue block — censusing on `check` there gives 1. A file whose row count is far
+below its visible assertion count has been matched at the wrong call site.
+
 Two things it deliberately excludes, so that you do not have to decide:
 **comment lines** (a driver's usage example is not a test case) and **harness
 files** matching `*driver*`, `*helper*`, `*support*`, `*fixture*`, `*conftest*`.
@@ -91,6 +106,23 @@ file and write down, for each test, what it actually asserts. The identifier is
 rarely enough: `/cli/task_validator/date_format_valid` does not tell you which
 formats, or that the empty string is deliberately excluded. That purpose is the
 thing you are porting; the name is just its handle.
+
+**Cross-check the census against the build file's test list** — the `tests`
+array in `tests/meson.build`, `[[test]]` in `Cargo.toml`, `testpaths` in
+`pytest.ini`, the `test` task in a Rakefile. A declared test binary with zero
+census rows means the script missed that file's registration macro, not that
+the binary has no tests:
+
+```sh
+grep -oE "'[a-z0-9-]+'" up/tests/meson.build | tr -d "'" | sort -u   # declared
+cut -f1 upstream-tests.tsv | sort -u                                  # censused
+```
+
+kgx registers 127 cases three different ways — `g_test_add_func`,
+`g_test_add_data_func` and a fixture macro wrapping `g_test_add` whose path
+argument is a *variable*. The last of those cannot be matched by any regex; the
+build-file cross-check is the only thing that finds it, and those cases are
+censused by hand from the file.
 
 A test whose purpose you cannot state in a sentence has not been censused.
 Do not move on.
@@ -163,8 +195,10 @@ Keep the upstream suite's file structure too. If upstream splits the CLI tests
 across three files, the port splits them across three files. A single
 `test/all_test.rb` holding 34 tests passes the count and loses the shape.
 
-The port's tests are plain Ruby run under the project `Makefile`'s `test`
-target — see the `ruby-gtk-testing` skill for the non-widget checks and the
+The port's tests are plain Ruby, run under whatever target the port declares —
+`rake test`, `make test`, `meson test`. Check which exists (`ls Rakefile
+Makefile meson.build`) and **name the command you ran in the ledger header**
+— see the `ruby-gtk-testing` skill for the non-widget checks and the
 headless driver. Nothing here asks for a new framework.
 
 ### Step 4 — Prove it
@@ -179,7 +213,7 @@ Parity is proven when all four hold:
 - the two counts are equal;
 - every ledger row has a non-empty `Port test`;
 - every test named in the ledger exists, by that name, in the port tree;
-- the port's suite passes (`make test`).
+- the port's suite passes under its own test target (`rake test` / `make test`).
 
 Report the numbers, not an adjective. "34/34, suite green" is a claim someone
 can re-run. "Good test coverage" is not.
@@ -218,6 +252,48 @@ upstream considered worth pinning.
 rows need no Purpose cell and no bijection — they are outside the count by
 definition. Say the "no safety net" line explicitly; it is the finding, and
 leaving it implied is how a 0/0 report gets read as a pass.
+
+## How this ledger relates to the others
+
+A fork carries up to four documents, and they are not interchangeable:
+
+| File | Source of truth for |
+|---|---|
+| `PORTING.md` | **what was ported** — the enumerated units, their state, the cursor |
+| `TEST_PARITY.md` | **what was tested** — this skill's census and bijection |
+| `COMPONENT_PARITY.md` | **what was built** — the three-axis component comparison |
+| `FINDINGS.md` | **binding defects** — ruby-gnome bugs and workarounds found en route |
+
+`PORTING.md` wins on questions of scope. If it records a component as
+deliberately dropped, that decision is already made and this ledger records the
+consequence rather than relitigating it.
+
+### The `dropped` state
+
+Upstream tests covering deliberately-dropped code are the one case the
+`ported` / `substituted` / `gap` triple cannot express: the code under test does
+not exist in the port, and no Ruby test stands in for it, so `substituted` is a
+lie and `gap` turns an accepted architectural decision into a permanent
+failure. console-rb drops `KgxDepot`, `KgxDespatcher`, `KgxSpadSource` and
+`KgxTemplated`, which carry 14 upstream tests between them.
+
+So: `dropped(<PORTING.md section>)`. The row stays, the Purpose cell stays, and
+the `Port test` cell cites the `PORTING.md` section instead of a test. Dropped
+rows are counted separately from gaps in the header:
+
+```
+| Upstream tests | 127 |
+| Ported | 98 |
+| Dropped (see PORTING.md) | 14 |
+| Gaps | 15 |
+```
+
+**A `dropped` row with no corresponding `PORTING.md` entry is not allowed.**
+Write the `PORTING.md` entry first; otherwise `dropped` becomes the `skipped`
+state this skill exists to refuse.
+
+Cite `FINDINGS.md` from a row when a binding defect is *why* a test is
+substituted — never copy its content into this ledger.
 
 ## Worked example — planify-rb
 

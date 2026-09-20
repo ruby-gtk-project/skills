@@ -43,7 +43,9 @@ cp -r /tmp/skills/{test-parity,component-identification,component-parity} \
 ## The scans
 
 Both scripts are grep over source across Vala, C, Python, GJS, Rust, Ruby,
-GtkBuilder XML and blueprint. They are **leads, not verdicts** — each skill's
+GtkBuilder XML and blueprint. **Look for `.blp`/`.ui` files before running
+either** — where they exist they are the component tree, already nested, and
+`component-identification` Step 1 says how to read them. They are **leads, not verdicts** — each skill's
 "read the files" step is not optional, and both skills document exactly how
 their scan over- and under-reports.
 

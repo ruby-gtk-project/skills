@@ -2,8 +2,10 @@
 # Inventory the UI components of a GTK app, per file.
 #
 # Output: <file>\t<kind>\t<value>\t<count>
-#   kind = widget  a Gtk/Adw type instantiated or declared in that file
-#          css     a CSS class attached to a widget in that file
+#   kind = widget   a Gtk/Adw type instantiated or declared in that file
+#          css      a CSS class attached to a widget in that file
+#          css-name a GTK element name (set_css_name) - an element selector,
+#                   not a class selector; compare against the port's classes
 #          signal  a signal that file connects a handler to
 #          action  a GAction name installed or referenced in that file
 #
@@ -30,7 +32,8 @@ srcfiles() {
     -not -path '*/subprojects/*' -not -path '*/.bundle/*' \
     -not -path '*/.claude/skills/*' -not -path '*/target/debug/*' \
     -not -path '*/test/*' -not -path '*/tests/*' -not -path '*/spec/*' \
-    \( -name '*.ui' -o -name '*.blp' -o -name '*.vala' -o -name '*.c' \
+    \( -name '*.ui' -o -name '*.ui.in' -o -name '*.blp' -o -name '*.blp.in' \
+       -o -name '*.vala' -o -name '*.c' -o -name '*.h' \
        -o -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.rs' \
        -o -name '*.rb' \) 2>/dev/null
 }
@@ -42,6 +45,16 @@ tally() {
   sed 's/^ *//; s/ *$//' | awk 'NF' | sort | uniq -c \
     | awk -v f="$1" -v k="$2" '{c=$1; $1=""; sub(/^ /,""); print f "\t" k "\t" $0 "\t" c}'
 }
+
+# C hides CSS class names behind constants - #define KGX_WINDOW_STYLE_ROOT
+# "root" in a header, used as a bare identifier at the call site. Resolve them
+# once up front so those classes are not silently lost.
+MACROMAP=$(mktemp)
+trap 'rm -f "$MACROMAP"' EXIT
+# shellcheck disable=SC2046
+grep -rhoE '#define[[:space:]]+[A-Z][A-Z0-9_]*[[:space:]]+"[^"]+"' $(srcfiles) 2>/dev/null \
+  | sed -E 's/#define[[:space:]]+([A-Z][A-Z0-9_]*)[[:space:]]+"([^"]+)"/\1\t\2/' \
+  | sort -u > "$MACROMAP"
 
 srcfiles | while IFS= read -r f; do
   rel=${f#"$TREE"/}
@@ -68,6 +81,25 @@ srcfiles | while IFS= read -r f; do
       | sed -E 's/^gtk4?::/Gtk./; s/^(adw|libadwaita)::/Adw./; s/^vte::/Vte./
                 s/^sourceview5?::/GtkSource./; s/^shumate::/Shumate./
                 s/^webkit6?::/WebKit./; s/^panel::/Panel./'
+    # C: GTK_TYPE_LIST_BOX / ADW_TYPE_ACTION_ROW macros, and gtk_*_new()
+    # constructors. Without these the whole C source side is invisible - the
+    # widget tree is in the .ui, but everything built at runtime is in here.
+    {
+      grep -ohE '\b(GTK|ADW|VTE)_TYPE_[A-Z0-9_]+' "$f" 2>/dev/null
+      grep -ohE '\b(gtk|adw|vte)_[a-z0-9_]+_new[a-z_]*[[:space:]]*\(' "$f" 2>/dev/null \
+        | sed -E 's/[[:space:]]*\($//; s/_new[a-z_]*$//' \
+        | tr '[:lower:]' '[:upper:]' | sed -E 's/^(GTK|ADW|VTE)_/\1_TYPE_/'
+    } | awk '
+        BEGIN { m["GTK"] = "Gtk"; m["ADW"] = "Adw"; m["VTE"] = "Vte" }
+        {
+          ns = $0; sub(/_TYPE_.*/, "", ns)
+          rest = $0; sub(/^[A-Z]+_TYPE_/, "", rest)
+          n = split(tolower(rest), part, "_"); name = ""
+          for (i = 1; i <= n; i++)
+            name = name toupper(substr(part[i], 1, 1)) substr(part[i], 2)
+          if (ns in m && name != "") print m[ns] "." name
+        }'
+
     # Blueprint bare declarations. `using Gtk 4.0` makes Gtk the implicit
     # namespace, so the whole widget tree is written unprefixed - `Box {`,
     # `MenuButton btn {`, `content: WindowHandle {`. Without this the only
@@ -87,9 +119,20 @@ srcfiles | while IFS= read -r f; do
   {
     # GtkBuilder: <class name="suggested-action"/>
     grep -ohE '<class +name="[^"]+"' "$f" 2>/dev/null | sed 's/^[^"]*"//; s/"$//'
-    # add_css_class ("flat") - Vala, C, Python, Ruby, JS, Rust
-    grep -ohE 'add_css_class *\( *"[^"]+"' "$f" 2>/dev/null | sed 's/^[^"]*"//; s/"$//'
-    grep -ohE "add_css_class *\( *'[^']+'" "$f" 2>/dev/null | sed "s/^[^']*'//; s/'$//"
+    # add_css_class ("flat") and, in C, gtk_widget_add_css_class (w, "flat")
+    # where the widget comes first. Take the first quoted string either way.
+    # remove_css_class counts too: a class a widget takes off is a class it
+    # can wear, and the port needs the same state.
+    grep -ohE '(add|remove)_css_class *\([^;]*"[^"]+"' "$f" 2>/dev/null \
+      | sed 's/^[^"]*"//; s/".*$//'
+    grep -ohE "(add|remove)_css_class *\([^;]*'[^']+'" "$f" 2>/dev/null \
+      | sed "s/^[^']*'//; s/'.*\$//"
+    # ... and the same call taking a #define'd constant instead of a literal.
+    grep -ohE '(add|remove)_css_class *\([^;]*,[[:space:]]*[A-Z][A-Z0-9_]+' "$f" 2>/dev/null \
+      | sed -E 's/.*,[[:space:]]*//' \
+      | while IFS= read -r macro; do
+          awk -F'\t' -v m="$macro" '$1 == m { print $2 }' "$MACROMAP"
+        done
     # css_classes = ["flat"] / styles ["flat"] (blueprint) /
     # .css_classes(vec!["flat"]) and .set_css_classes(&["flat"]) (gtk-rs).
     # Blueprint normally breaks these across lines, so the bracket is tracked
@@ -98,6 +141,16 @@ srcfiles | while IFS= read -r f; do
          s { print; if (/\]/) s = 0 }' "$f" 2>/dev/null \
       | grep -ohE '"[^"]+"' | tr -d '"'
   } | tally "$rel" css
+
+  # --- css element names ------------------------------------------------
+  # gtk_widget_class_set_css_name (klass, "kgx-tab") makes the CSS selector
+  # `kgx-tab { }` rather than `.kgx-tab { }`. A Ruby port has no GType to hang
+  # a css name on and re-expresses these as classes, so they are their own
+  # kind - comparing them against the `css` stream reports false gaps.
+  {
+    grep -ohE 'set_css_name *\([^;]*"[^"]+"' "$f" 2>/dev/null | sed 's/^[^"]*"//; s/".*$//'
+    grep -ohE 'css_name *[=:] *"[^"]+"' "$f" 2>/dev/null | sed 's/^[^"]*"//; s/".*$//'
+  } | tally "$rel" css-name
 
   # --- signals -------------------------------------------------------------
   # What the component responds to. Connection sites, not emissions.
@@ -111,13 +164,20 @@ srcfiles | while IFS= read -r f; do
     grep -ohE 'connect(_after|_object)? *\( *"[^"]+"' "$f" 2>/dev/null | sed 's/^[^"]*"//; s/"$//'
     # Ruby: signal_connect("notify::position") - the detail is part of the
     # signal, so ':' stays inside the character class.
-    grep -ohE "signal_connect(_after)? *\(? *[:\"'][A-Za-z0-9_:-]+" "$f" 2>/dev/null \
+    grep -ohE "signal_connect(_after)? *\(? *[:\"'][A-Za-z0-9_:.-]+" "$f" 2>/dev/null \
       | sed -E "s/.*signal_connect(_after)? *\(? *[:\"']//"
     # gtk-rs: b.connect_clicked(...), connect_notify_local(Some("position"), ..)
     grep -ohE 'connect_notify(_local)? *\( *Some\( *"[^"]+"' "$f" 2>/dev/null \
       | sed 's/^[^"]*"//; s/"$//; s/^/notify::/'
     grep -ohE '\bconnect_[a-z0-9_]+ *\(' "$f" 2>/dev/null \
       | grep -vE 'connect_notify' | sed -E 's/^connect_//; s/ *\($//'
+    # C: g_signal_connect (obj, "clicked", ...) - the name is very often on
+    # the continuation line, so track the open paren rather than the line.
+    awk '/g_signal_connect[a-z_]*[[:space:]]*\(/ { s = 1 }
+         s { if (match($0, /"[a-z][a-z0-9_:.-]*"/)) {
+               print substr($0, RSTART + 1, RLENGTH - 2); s = 0
+             } else if (/\);/) s = 0 }' "$f" 2>/dev/null
+
     # Blueprint: clicked => $on_clicked()
     grep -ohE '^[[:space:]]*[a-z][a-z0-9_-]* *=> *\$' "$f" 2>/dev/null | sed 's/ *=>.*//'
   } | sed 's/_/-/g' | tally "$rel" signal
@@ -128,11 +188,17 @@ srcfiles | while IFS= read -r f; do
   # names registered at an install site - a port commonly builds 'start-tour'
   # and lets the widget supply the `win.` prefix, so the literal never appears.
   {
-    grep -ohE "['\"](app|win)\.[A-Za-z0-9_.-]+['\"]" "$f" 2>/dev/null | tr -d "\"'"
-    grep -ohE '>(app|win)\.[A-Za-z0-9_.-]+<' "$f" 2>/dev/null | tr -d '><'
-    grep -ohE '(SimpleAction\.new|install_action|add_action|create_action|lookup_action|action_name) *[(=:] *["'"'"'][A-Za-z0-9_.-]+' \
+    # Any prefix, not just app./win. - a widget action group can be called
+    # anything, and kgx uses term., tab. and spad. for most of its actions.
+    grep -ohE "['\"][a-z][a-z0-9-]*\.[a-z0-9_-]+['\"]" "$f" 2>/dev/null | tr -d "\"'"
+    grep -ohE '>[a-z][a-z0-9-]*\.[a-z0-9_-]+<' "$f" 2>/dev/null | tr -d '><'
+    # Bare names at an install site: the widget supplies the prefix.
+    grep -ohE '(SimpleAction\.new|install_action|add_action|create_action|lookup_action|action_name) *[(=:][^)]*["'"'"'][A-Za-z0-9_.-]+' \
       "$f" 2>/dev/null | sed -E 's/.*["'"'"']//'
-  } | tally "$rel" action
+  } | awk -F. 'NF <= 2' \
+    | grep -vE '\.(css|ui|blp|svg|png|xml|json|in|rb|py|c|h|vala|desktop|gresource|po|mo|txt|md|sh|yml|gz|html|js)$' \
+    | grep -vE '^(org|com|io|net|www|gnome|gtk|glib|self|this|e|g)\.' \
+    | tally "$rel" action
 
   :
 done

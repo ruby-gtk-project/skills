@@ -122,9 +122,23 @@ normalise to `Adw.ActionRow`.
 The scan is a lead, not a verdict. It matches text, so it over-reports and
 under-reports in known ways, and every one of them needs a human decision:
 
-**Over-reports.** Namespaced names that are not widgets at all land in the
-`widget` stream: `Adw.Easing`, `Adw.DialogPresentationMode`, `Gtk.Orientation`
-— enums, flags and helper types. Strike them; they are not components.
+**Over-reports.** Plenty of namespaced names are not widgets. On a
+GtkBuilder-heavy tree this is around a third of the `widget` stream, so strike
+by category rather than case by case:
+
+| Strike | Examples |
+|---|---|
+| Enums and flags | `Adw.Easing`, `Adw.DialogPresentationMode`, `Gtk.Orientation` |
+| `<child>` wrappers | `Gtk.StackPage`, `Adw.TabPage`, `Gtk.ListItem` |
+| Models and buffers | `Gtk.EntryBuffer`, `Gtk.TextBuffer`, `*Filter`, `*ListModel`, `*Selection`, `Gtk.Adjustment` |
+| Layout managers | `Gtk.BoxLayout`, `Adw.ClampLayout` |
+| Singletons and helpers | `Adw.StyleManager`, `Gtk.Builder`, `Adw.TimedAnimation`, `Adw.CallbackAnimationTarget` |
+
+**Event controllers and gestures are the exception** — `Gtk.EventControllerKey`,
+`Gtk.GestureClick`, `Gtk.ShortcutController` are not widgets, but they *are*
+behaviour, and dropping them loses a whole class of interaction. Move them onto
+the signal axis of the widget they are attached to rather than striking them.
+
 `Gtk.Template`, `Gtk.Template.Child` and `Gtk.Template.Callback` are PyGObject
 template plumbing and are filtered by the script, but the widgets they stand
 for are real — their types are in the `.blp`/`.ui`, not in the Python.
@@ -139,6 +153,7 @@ widgets, so they belong under behaviour, not in the widget count.
 - **CSS classes from the stylesheet side.** The app's `.css` files define classes the source may apply indirectly. Read them; a class defined and never applied is dead, and a class applied and never defined is a bug worth reporting either way.
 - **Composite widgets.** A project's own `ItemRow` is a component whose parts are in another file. The inventory records the use *and* follows into the definition.
 - **Bare blueprint declarations.** `ActionRow { }` without its `Adw.` prefix inside a `.blp` is not matched.
+- **CSS classes behind a C macro.** `gtk_widget_add_css_class (w, KGX_WINDOW_STYLE_ROOT)` names nothing readable. The script resolves `#define NAME "value"` across the tree, including from `.h` files — but only single-token literal defines. A class assembled at runtime (`g_strdup_printf`) still needs reading.
 - **Widgets from libraries other than GTK and libadwaita.** The scan knows `Vte`, `GtkSource`, `Shumate`, `WebKit` and `Panel` as well as `Gtk`/`Adw`, but an app embedding anything else — a map view, a chart widget, a custom C library — produces no row for it. Read the `.ui` `parent=` attributes and the build file's dependencies to find out which libraries are in play before trusting the widget stream.
 - **App-defined widgets used as parents.** `<template class="KgxSimpleTab" parent="KgxTab">` means this app subclasses its own widget. Neither name is a GTK type, so neither is a row — but the inheritance is real and the port has to reproduce it. Template roots whose `parent=` is an app class are a component hierarchy; map it before comparing anything.
 - **App-defined template classes.** `<template class="PaginatorWidget" parent="AdwBin">` gives a row for `Adw.Bin` and none for `PaginatorWidget`, because it is this app's own name, not a GTK type. Every `<child>` that instantiates it is a component whose parts are in the file that defines the template — resolve it, and count the uses.
@@ -176,8 +191,8 @@ the thing being ported.
 
 Absent a `PLAN.md` (see below), take a unit to be **one top-level widget class**
 — one `.ui`/`.blp` template, one `impl ObjectSubclass` block, one `GtkWidget`
-subclass — together with the source file that backs it and the port file that
-corresponds to it. Two additions, without which real parts of the app belong to
+subclass, one `G_DEFINE_TYPE` / `G_DECLARE_FINAL_TYPE` pair in C — together
+with the source file that backs it and the port file that corresponds to it. Two additions, without which real parts of the app belong to
 no unit at all:
 
 - **One unit for the application class.** `BinaryApplication(Adw.Application)` is not a widget class, but it holds the actions, the accelerators, the About dialog and the preferences entry point.

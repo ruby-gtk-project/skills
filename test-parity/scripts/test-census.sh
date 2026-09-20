@@ -51,23 +51,25 @@ emit() {
 }
 
 for tree in "$@"; do
-  testfiles "$tree" | while IFS= read -r f; do
+  TREE=${tree%/}
+  testfiles "$TREE" | while IFS= read -r f; do
+    rel=${f#"$TREE"/}
     case "$f" in
       # GLib test framework: Test.add_func ("/suite/case", ...) / g_test_add_func
       *.vala|*.c|*.cpp)
-        emit "$f" "$f" '(g_)?[Tt]est(\.|_)add_func *\( *"[^"]+"' 's/^[^"]*"//; s/"$//' ;;
+        emit "$rel" "$f" '(g_)?[Tt]est(\.|_)add(_data)?(_func)? *\( *"[^"]+"' 's/^[^"]*"//; s/"$//' ;;
 
       # unittest methods and pytest functions. Comment lines are blanked first
       # (line numbering preserved) so a usage example in a docstring-adjacent
       # comment is not censused as a case.
       *.py)
         tmp=$(mktemp); sed 's/^[[:space:]]*#.*//' "$f" > "$tmp"
-        emit "$f" "$tmp" '^[[:space:]]*(async +)?def +test[A-Za-z0-9_]*' 's/.*def +//'
+        emit "$rel" "$tmp" '^[[:space:]]*(async +)?def +test[A-Za-z0-9_]*' 's/.*def +//'
         rm -f "$tmp" ;;
 
       # Jasmine/Mocha it(...) - GJS apps and any JS/TS port
       *.js|*.ts)
-        emit "$f" "$f" "\\b(it|test)\\( *['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/" ;;
+        emit "$rel" "$f" "\\b(it|test)\\( *['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/" ;;
 
       # Rust: the attribute is the registration, the following fn name is the
       # identifier. Stateful rather than a fixed context window, so that
@@ -83,20 +85,22 @@ for tree in "$@"; do
             print FILENAME "\t" id "\t" NR
             t = 0
           }
-        }' "$f" ;;
+        }' "$f" | sed "s|^$TREE/||" ;;
 
       # Ruby: minitest def test_*, spec-style it "...", and the house style
       # used across this fleet's ports - a named check(...) block, or
       # d.check(...) under the ruby-gtk-testing driver. A `check` is the named
       # assertion unit, which is what a GLib Test.add_func case is too; a
-      # driver `step` is a grouping and is deliberately not counted.
+      # driver `step` names the case in some ports, so both are collected -
+      # the skill says how to pick which one is this suite's unit.
       *.rb)
         tmp=$(mktemp); sed 's/^[[:space:]]*#.*//' "$f" > "$tmp"
-        emit "$f" "$tmp" '^[[:space:]]*def +test_[A-Za-z0-9_?!]*' 's/.*def +//'
-        emit "$f" "$tmp" "^[[:space:]]*it +['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/"
-        emit "$f" "$tmp" "(^|[^A-Za-z_.])(d\\.)?check\\( *['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/"
+        emit "$rel" "$tmp" '^[[:space:]]*def +test_[A-Za-z0-9_?!]*' 's/.*def +//'
+        emit "$rel" "$tmp" "^[[:space:]]*it +['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/"
+        emit "$rel" "$tmp" "(^|[^A-Za-z_.])(d\\.)?check\\( *['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/"
+        emit "$rel" "$tmp" "^[[:space:]]*(d\.)?step *\(? *['\"][^'\"]+['\"]" "s/.*['\"]([^'\"]+)['\"].*/\\1/"
         rm -f "$tmp" ;;
     esac
   done
-done | sort -u
+done | grep -vF '#{' | sort -u
 :
