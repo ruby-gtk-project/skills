@@ -188,20 +188,65 @@ def languages_in(tree)
 end
 
 # The domain is the .mo filename, so it must be upstream's for upstream's
-# catalogues to be found. Read rather than assumed: meson.project_name() for a
-# GNOME app, the gettext task's domain for a Ruby port.
+# catalogues to be found. Read rather than assumed, in the order the answer is
+# most likely to be right, and report where it came from - a wrong domain
+# orphans every catalogue the port inherited, and it is the single easiest
+# field to get quietly wrong.
+#
+# kgx is the case that defeats a one-line heuristic: `project('gnome-console')`
+# but `i18n.gettext(bin_name)` with `bin_name = 'kgx'`, and the .mo files are
+# `kgx.mo`. Guessing the project name renames the domain and strands 61
+# languages.
 def domain_in(tree)
+  po_meson = File.join(tree, 'po', 'meson.build')
+  if File.exist?(po_meson) && (m = File.read(po_meson).match(/i18n\.gettext\s*\(\s*([^,)\s]+)/m))
+    arg = m[1]
+    return [arg[1..-2], 'po/meson.build'] if arg =~ /\A['"].*['"]\z/
+    return [project_name(tree), 'meson.project_name()'] if arg.include?('project_name')
+
+    resolved, alts = resolve_meson_var(tree, arg)
+    return [resolved, "po/meson.build (#{arg}#{alts.empty? ? '' : ", also #{alts.join(', ')}"})"] if resolved
+  end
+
   meson = File.join(tree, 'meson.build')
-  if File.exist?(meson) && (m = File.read(meson).match(/project\s*\(\s*'([^']+)'/))
-    return m[1]
+  if File.exist?(meson) && (m = File.read(meson).match(/GETTEXT_PACKAGE['"]?\s*,\s*['"]([^'"]+)['"]/))
+    return [m[1], 'GETTEXT_PACKAGE']
   end
 
-  rakefile = File.join(tree, 'Rakefile')
-  if File.exist?(rakefile) && (m = File.read(rakefile).match(/\.domain\s*=\s*["']([^"']+)["']/))
-    return m[1]
+  # A committed .pot is named for the domain.
+  pot = Dir.glob(File.join(tree, 'po', '*.pot')).first
+  return [File.basename(pot, '.pot'), 'po/*.pot'] if pot
+
+  Dir.glob(File.join(tree, '{Rakefile,lib/**/*.rb,bin/*}')).each do |f|
+    next unless File.file?(f)
+
+    src = File.read(f)
+    if (m = src.match(/(?:\.domain\s*=|TEXT_?DOMAIN\s*=|bindtextdomain[\s(]+)\s*["']([^"']+)["']/))
+      return [m[1], f.sub("#{tree}/", '')]
+    end
   end
 
-  nil
+  pn = project_name(tree)
+  pn ? [pn, 'meson project() - unconfirmed'] : [nil, nil]
+rescue StandardError
+  [nil, nil]
+end
+
+def project_name(tree)
+  meson = File.join(tree, 'meson.build')
+  File.exist?(meson) ? File.read(meson)[/project\s*\(\s*'([^']+)'/, 1] : nil
+end
+
+# One level of meson variable resolution, no more. Conditional assignments are
+# not evaluated: the last one wins and the others are reported alongside, so a
+# wrong pick is visible instead of silent.
+def resolve_meson_var(tree, name)
+  values = Dir.glob(File.join(tree, '{meson.build,*/meson.build}')).flat_map do |f|
+    File.read(f).scan(/^\s*#{Regexp.escape(name)}\s*=\s*['"]([^'"]+)['"]/).flatten
+  end
+  return [nil, []] if values.empty?
+
+  [values.last, values[0..-2].uniq]
 end
 
 def git(tree, *args)
@@ -212,6 +257,7 @@ end
 def catalogue(tree, role, domain_override)
   msgs = messages_in(tree)
   langs = languages_in(tree)
+  domain = domain_in(tree)
 
   {
     'version' => 1,
@@ -222,7 +268,8 @@ def catalogue(tree, role, domain_override)
       'sha' => git(tree, 'rev-parse', '--short', 'HEAD'),
       'scanned' => Date.today.to_s
     }.compact,
-    'domain' => domain_override || domain_in(tree),
+    'domain' => domain_override || domain[0],
+    'domain_source' => domain_override ? 'passed with --domain' : domain[1],
     'totals' => {
       'messages' => msgs.size,
       'occurrences' => msgs.sum { |m| m['uses'] },

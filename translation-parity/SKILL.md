@@ -215,9 +215,24 @@ twenty-three messages through two such calls over a frozen `PAGES` table;
 gnome-contacts upstream has two, both dynamic lookups over tables marked with
 `N_()` elsewhere.
 
-The other known under-report is a msgid built by concatenating literals across
-lines. That one is invisible even as an unresolved row, and the po cross-check
-above is what finds it.
+The scanner joins each line with the six that follow it and absorbs adjacent
+literals and trailing `\` continuations, so a msgid split across lines — the
+normal shape in C and common in Ruby — is read whole. One that spans more than
+seven lines is not, and it is invisible even as an unresolved row. The po
+cross-check above is what finds those.
+
+### The canonical msgid
+
+A msgid is the string's **value**, not its source spelling. C writes an
+embedded quote as `\"`, Ruby single-quoted source writes it bare, and a `.po`
+writes `\"` again — one gettext key, three spellings. The census normalises
+the quote and leaves `\n` and `\t` as written, on both the source and po
+sides, so those three compare equal.
+
+This matters more than it sounds: kgx has five messages containing
+`<a href=\"%s\">`, and comparing raw source bytes turns each one into a
+phantom gap *and* a phantom extra — ten wrong rows out of 138 from an escape
+character.
 
 **Read the output as a lead, not a verdict.** Then open the files. The census
 gives you keys; the ledger needs to say what each message is *for*, and
@@ -336,7 +351,8 @@ tree:
   ref: main
   sha: 86f14e6a
   scanned: '2026-09-20'
-domain: gnome-contacts      # meson.project_name(), or the Rakefile's task.domain
+domain: gnome-contacts      # the .mo filename - verify it, see below
+domain_source: meson.project_name()   # where the value was read from
 totals:
   messages: 217             # distinct (ctxt, id) keys - the catalogue size
   occurrences: 260          # call sites
@@ -367,6 +383,18 @@ messages:
     uses: 1
     sites: ['data/ui/contacts-shortcut-dialog.blp:16']
 ```
+
+**Check `domain_source` before trusting `domain`.** The domain is the `.mo`
+filename, so getting it wrong orphans every catalogue the port inherited, and
+it is the easiest field to get quietly wrong. kgx is `project('gnome-console')`
+but `i18n.gettext(bin_name)` with `bin_name = 'kgx'` — the project name is not
+the domain, and the `.mo` files are `kgx.mo`. The reader tries `po/meson.build`
+first, then `GETTEXT_PACKAGE`, then a committed `.pot`'s name, then the port's
+own source, and only falls back to `project()` labelled `unconfirmed`. A
+conditional assignment is reported with its alternatives
+(`bin_name, also kgx-devel`) rather than silently resolved. When the source
+says `unconfirmed`, or names alternatives, confirm it against the installed
+`.mo` and pass `--domain`.
 
 `ctxt` is **absent**, not empty, when a message has no context — so a key is
 `[ctxt, id]` with a real nil, and no msgid beginning with a sentinel character
@@ -497,7 +525,11 @@ that ledger accounts for all nine, whether as nine components or as one
 helper used nine times.
 
 Group the tables by upstream *source file*, mapped to the port file that
-replaced it, the same way `COMPONENT_PARITY.md` groups by component — a flat
+replaced it. A message reached from several files — kgx says `Console` in four
+— gets **one** row, grouped under the file the census lists first, with the
+others in its `Uses` cell. One row per message is the rule that makes the count
+mean something; grouping is presentation, and no message may appear twice to
+make a table read better. Groupthe same way `COMPONENT_PARITY.md` groups by component — a flat
 table of 217 rows is unreviewable and hides which screen is untranslated.
 
 Gaps carry a seventh column, `Text still owed`, holding the English the port

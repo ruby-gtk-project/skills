@@ -35,8 +35,129 @@ sources() {
        -o -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.rs' \
        -o -name '*.rb' -o -name '*.blp' -o -name '*.ui' -o -name '*.xml' \
        -o -name '*.xml.in' -o -name '*.xml.in.in' \
-       -o -name '*.desktop.in' -o -name '*.desktop.in.in' \
+       -o -name '*.desktop.in' -o -name '*.desktop.in.in' -o -name '*.desktop' \
+       -o -name '*.ui.in' \
        -o -name '*.po' -o -name '*.pot' \) 2>/dev/null
+}
+
+# The marker scanner. Separated out so the two comment dialects share it.
+#
+# Works on a joined buffer of the current line plus the next few, because a
+# marker's msgid routinely lives on a different line from the marker:
+#
+#     error_body = g_strdup_printf (C_("spad-message",
+#                                      "The link "<a href=\"%s\">%s</a>" uses "
+#                                      "the protocol "%s", for which no apps "
+#                                      ...
+#
+# and because C concatenates adjacent literals, so the msgid there is four
+# source literals. A line-at-a-time scan reports that call as unresolved and
+# kgx loses twelve of its messages that way. Matches are only reported when
+# they *start* on the current line, so the window never double-counts.
+markers_awk() {
+  awk -v F="$2" -v LANG_KIND="$3" '
+    BEGIN {
+      Q  = sprintf("%c", 39)
+      DQ = "^[[:space:]]*\"([^\"\\\\]|\\\\.)*\""
+      SQ = "^[[:space:]]*" Q "([^" Q "\\\\]|\\\\.)*" Q
+      LOOKAHEAD = 6
+    }
+
+    # Take the leading string literal of s, in either quote style, absorbing
+    # any literals adjacent to it. Sets LIT and LITREST.
+    function take_lit(s,   m, q, out, got) {
+      out = ""; got = 0
+      while (1) {
+        if (match(s, DQ)) q = "\""
+        else if (match(s, SQ)) q = Q
+        else break
+        m = substr(s, RSTART, RLENGTH)
+        s = substr(s, RSTART + RLENGTH)
+        sub("^[[:space:]]*" q, "", m)
+        sub(q "$", "", m)
+        out = out m
+        got = 1
+      }
+      if (!got) return 0
+      # A msgid is a lookup key, so the two trees must spell it the same way.
+      # C writes an embedded quote as \" and Ruby single-quoted source writes
+      # it bare; they are one gettext key and must not compare as two.
+      gsub(/\\"/, "\"", out)
+      gsub("\\\\" Q, Q, out)
+      LIT = out
+      LITREST = s
+      return 1
+    }
+
+    function is_comment(line) {
+      if (LANG_KIND == "hash") return (line ~ /^[[:space:]]*#/)
+      # Block-comment continuation needs the space: `* foo` is a comment,
+      # `*title = g_strdup_printf (_("Process %d"), ...)` is a statement.
+      return (line ~ /^[[:space:]]*(\/\/|--)/ || line ~ /^[[:space:]]*\*[[:space:]]/)
+    }
+
+    { line[NR] = $0 }
+
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (is_comment(line[i])) continue
+        # A trailing backslash is a line continuation in both Ruby and C, and
+        # it sits *between* the two halves of a msgid that was wrapped across
+        # lines with one. It has to come off before the halves can be joined.
+        # Left in, the census reports the first fragment as a message of its
+        # own, which surfaces as one gap plus one extra for a string that is
+        # perfectly fine.
+        buf = line[i]
+        sub(/\\[[:space:]]*$/, "", buf)
+        own = length(buf)
+        for (j = i + 1; j <= i + LOOKAHEAD && j <= NR; j++) {
+          if (is_comment(line[j])) break
+          nxt = line[j]
+          sub(/\\[[:space:]]*$/, "", nxt)
+          buf = buf " " nxt
+        }
+
+        pos = 1
+        while (match(substr(buf, pos), /(^|[^A-Za-z0-9_.])(g_)?(_|N_|NC_|C_|n_|Nn_|np_|p_|s_|ngettext|gettext|dgettext|dngettext|dpgettext|dpgettext2|pgettext|npgettext)[[:space:]]*\(/)) {
+          start = pos + RSTART - 1
+          if (start > own) break          # this match belongs to a later line
+          m = substr(buf, start, RLENGTH)
+          sub(/^[^A-Za-z_]/, "", m); sub(/[[:space:]]*\($/, "", m)
+          pos = start + RLENGTH
+          rest = substr(buf, pos)
+
+          # Domain-first forms: the first argument names the text domain and
+          # is usually a macro, never the msgid. Drop it and read on.
+          if (m ~ /^(g_)?d(n|p)?gettext2?$/) {
+            if (rest !~ /,/) continue
+            sub(/^[^,]*,/, "", rest)
+          }
+          sub(/^g_/, "", m)
+
+          if (!take_lit(rest)) {
+            expr = substr(rest, 1, 60)
+            sub(/[[:space:]]*$/, "", expr)
+            print "!unresolved\t" m "(" expr "\tunresolved\t" F ":" i
+            continue
+          }
+          a = LIT; rest2 = LITREST
+          ctxt = "-"; id = a; kind = "single"
+
+          if (m == "C_" || m == "NC_" || m == "p_" || m == "np_" || m ~ /pgettext2?$/) {
+            if (rest2 !~ /^[[:space:]]*,/) continue
+            sub(/^[[:space:]]*,/, "", rest2)
+            if (!take_lit(rest2)) continue
+            ctxt = a; id = LIT
+            if (m == "np_" || m == "npgettext") kind = "plural"
+          } else if (m == "ngettext" || m == "n_" || m == "Nn_" || m == "dngettext") {
+            kind = "plural"
+          } else if (m == "s_" || m == "sgettext") {
+            if (index(a, "|")) { ctxt = substr(a, 1, index(a, "|") - 1); id = substr(a, index(a, "|") + 1) }
+          }
+          if (id != "") print ctxt "\t" id "\t" kind "\t" F ":" i
+        }
+      }
+    }' "$1"
 }
 
 for tree in "$@"; do
@@ -53,6 +174,11 @@ for tree in "$@"; do
       *.po|*.pot)
         awk -v F="$rel" '
           function flush(   k) {
+            # Same canonical form as the marker scanner: an embedded quote is
+            # a quote. po writes it \" and Ruby single-quoted source writes it
+            # bare, and they are one key.
+            gsub(/\\"/, "\"", id)
+            gsub(/\\"/, "\"", ctxt)
             if (id != "" ) {
               print (ctxt == "" ? "-" : ctxt) "\t" id "\t" (plural ? "plural" : "po") "\t" F ":" line
             }
@@ -73,7 +199,7 @@ for tree in "$@"; do
       # translatable="yes" marks the *element text*, with the context in a
       # sibling context= or comments= attribute. Handled statefully because
       # GtkBuilder wraps long labels onto the next line.
-      *.ui)
+      *.ui|*.ui.in)
         awk -v F="$rel" '
           {
             if (match($0, /translatable="(yes|true)"/)) {
@@ -122,7 +248,7 @@ for tree in "$@"; do
       # keys. The old `_Name=` intltool spelling is still in some trees.
       # Keywords is one message, semicolons and all, and it carries a
       # translator comment telling translators not to touch them.
-      *.desktop.in|*.desktop.in.in)
+      *.desktop.in|*.desktop.in.in|*.desktop)
         grep -nE '^_?(Name|GenericName|Comment|Keywords|X-GNOME-FullName)=' "$f" 2>/dev/null \
         | while IFS=: read -r line rest; do
             printf -- '-\t%s\tsingle\t%s:%s\n' "${rest#*=}" "$rel" "$line"
@@ -134,89 +260,17 @@ for tree in "$@"; do
       # use, because a port and its original are being compared and both must
       # be read by the same rules.
       #
-      #   _(  N_(  gettext(               -> single
-      #   C_(  NC_(  pgettext(  p_(  np_( -> single, with context
-      #   ngettext(  n_(  Nn_(            -> plural, key is the singular
+      #   _(  N_(  gettext(                     -> single
+      #   C_(  NC_(  pgettext(  p_(  np_(       -> single, with context
+      #   ngettext(  n_(  Nn_(                  -> plural, key is the singular
+      #   dgettext(  g_dngettext(  dpgettext2(  -> domain first, then the rest
       #
-      # Only the first string literal after the marker is taken, which is the
-      # msgid in every one of those forms except the context ones, where the
-      # first is the context and the second is the msgid.
-      *.vala|*.c|*.cpp|*.h|*.py|*.js|*.ts|*.rs|*.rb|*.blp)
-        awk -v F="$rel" '
-          # Both quote styles. Ruby ports written to rubocop defaults spell
-          # every marker with single quotes, as Python and GJS often do;
-          # a double-quote-only scanner reports those ports as having almost
-          # no messages, which reads as a translation gap rather than as a
-          # scanner that cannot see them. The single quote is built with
-          # sprintf so the program survives being written inside a shell
-          # single-quoted string.
-          BEGIN {
-            Q  = sprintf("%c", 39)
-            DQ = "^[[:space:]]*\"([^\"\\\\]|\\\\.)*\""
-            SQ = "^[[:space:]]*" Q "([^" Q "\\\\]|\\\\.)*" Q
-          }
-          # Take the leading string literal of s, in either quote style.
-          # Sets LIT to its contents and LITREST to what follows.
-          function take_lit(s,   m, q) {
-            if (match(s, DQ)) q = "\""
-            else if (match(s, SQ)) q = Q
-            else return 0
-            m = substr(s, RSTART, RLENGTH)
-            LITREST = substr(s, RSTART + RLENGTH)
-            sub("^[[:space:]]*" q, "", m)
-            sub(q "$", "", m)
-            LIT = m
-            return 1
-          }
-          {
-            line = $0
-            # Whole-line comments only: a marker inside a trailing comment is
-            # rare, and stripping // mid-line would eat URLs and C escapes.
-            if (line ~ /^[[:space:]]*(\/\/|#|\*|--)/) next
-            pos = 1
-            while (match(substr(line, pos), /(^|[^A-Za-z0-9_.])(_|N_|NC_|C_|n_|Nn_|np_|p_|s_|ngettext|d?n?p?gettext|pgettext2?)[[:space:]]*\(/)) {
-              start = pos + RSTART - 1
-              m = substr(line, start, RLENGTH)
-              sub(/^[^A-Za-z_]/, "", m); sub(/[[:space:]]*\($/, "", m)
-              pos = start + RLENGTH
-              rest = substr(line, pos)
-
-              # First literal - or, when the argument is not a literal at all,
-              # a row saying so. `_(page[:head])` over a table of strings is
-              # a real and common shape, and no regex can resolve it. Emitting
-              # nothing makes the port look like it has fewer messages than it
-              # has, which reads as a translation gap; emitting an `unresolved`
-              # row makes the scanner`s blind spot countable, and the skill
-              # requires every one of them to be censused by hand.
-              if (!take_lit(rest)) {
-                expr = substr(rest, 1, 60)
-                sub(/[[:space:]]*$/, "", expr)
-                print "!unresolved\t" m "(" expr "\tunresolved\t" F ":" NR
-                continue
-              }
-              a = LIT
-              rest2 = LITREST
-
-              ctxt = "-"; id = a; kind = "single"
-              if (m == "C_" || m == "NC_" || m == "p_" || m == "np_" || m ~ /^d?n?pgettext/) {
-                # The context markers take the msgid second; drop the comma
-                # and read another literal, which may be quoted either way -
-                # mixing the two styles in one call is legal and does happen.
-                if (rest2 !~ /^[[:space:]]*,/) continue
-                sub(/^[[:space:]]*,/, "", rest2)
-                if (!take_lit(rest2)) continue
-                b = LIT
-                ctxt = a; id = b
-                if (m == "np_") kind = "plural"
-              } else if (m == "ngettext" || m == "n_" || m == "Nn_") {
-                kind = "plural"
-              } else if (m == "s_") {
-                # s_("ctx|msgid") - the context is inside the literal
-                if (index(a, "|")) { ctxt = substr(a, 1, index(a, "|") - 1); id = substr(a, index(a, "|") + 1) }
-              }
-              if (id != "") print ctxt "\t" id "\t" kind "\t" F ":" NR
-            }
-          }' "$f" ;;
+      # `lang` tells the scanner what a comment looks like. It is not cosmetic:
+      # `#` opens a comment in Ruby and Python and opens a *preprocessor
+      # directive* in C, so treating it as a comment everywhere loses
+      # `#define URI_FAILED_MESSAGE C_("toast-message", "Couldn't Open Link")`.
+      *.rb|*.py) markers_awk "$f" "$rel" hash ;;
+      *.vala|*.c|*.cpp|*.h|*.js|*.ts|*.rs|*.blp) markers_awk "$f" "$rel" slash ;;
     esac
   done
 done | sort -u
