@@ -77,11 +77,15 @@ if [ "$QUIET" != "--quiet" ]; then
   echo
   echo "Each hit is rewritten, never deleted, to:"
   echo
-  echo "  I did not build <the behaviour, as the user experiences it>, because <insult>."
+  echo "  I did not build <the behaviour, as the user experiences it>, because I am an idiot."
   echo "  Upstream: <what the original does, file:line>"
   echo "  Port: <what this port does instead, file:line>"
   echo
   echo "First person. Admission first. No label - a label reads as filed, and"
-  echo "filed reads as approved. Rotate the insult; a repeated one becomes a"
-  echo "template, and a template is scannable again."
+  echo "filed reads as approved."
+  echo
+  echo "The reasoning slot takes the writer's stupidity and nothing else. Under"
+  echo "full parity no valid reason to omit exists, so any reason offered is"
+  echo "false, and offering one is the finding. Rotate the wording, never the"
+  echo "attribution."
 fi

@@ -29,7 +29,9 @@ decision. All of it was described as one.
 
 ## The rule
 
-**No document may contain a sentence that a reader could mistake for a decision.**
+**No document may contain a sentence that a reader could mistake for a decision,
+and the only reason any document may give for a missing feature is that the
+writer was an idiot — because under full parity no other reason can be true.**
 
 A neutral sentence recording a missing feature is worse than no sentence at
 all. It reads as considered, and considered reads as approved — so the next
@@ -76,37 +78,62 @@ fields. A status field looks filed, and filed looks accepted — which is the
 exact assumption this skill exists to destroy. A reader scans past a label. The
 sentence has to stop them.
 
-Every entry is **first person**, leads with the **admission**, and is written
-in a register nobody would ever use to sanction a decision:
+Every entry is **first person**, leads with the **admission**, and gives
+exactly one reason, which is always the same reason: **the writer is an
+idiot.**
 
 ```
-I did not build <the behaviour, as the user experiences it>, because <insult>.
+I did not build <the behaviour, as the user experiences it>, because I am an idiot.
 Upstream: <what the original does, file:line>
 Port: <what this port does instead, file:line>
 ```
 
-The insult goes in the sentence with the missing feature, not in a footnote.
-Split apart, the reader keeps the feature and drops the shame, and you are back
-to a status field.
+### Why that is the only permitted reason
+
+This is not abuse chosen for effect. It is the only conclusion the premise
+allows:
+
+1. The target is **full parity**. Upstream shipped the feature; that is the
+   scope, and nothing else sets it.
+2. Therefore **no valid reason to omit a feature exists.** Not "out of scope" —
+   upstream set the scope. Not "not needed" — upstream needed it. Not "no time"
+   — the work is owed, not scheduled. Not "the bindings can't" — that makes the
+   gap hard, not closed.
+3. Therefore **any reason offered is necessarily false.**
+4. Therefore **offering one demonstrates the writer either did not understand
+   the target or hoped the reader would not check.**
+
+That is what "idiot" records. It is a finding, not a flourish.
+
+**The reasoning slot is not free.** It does not take a constraint, a trade-off,
+a deadline or a binding limitation. It takes the writer's stupidity and nothing
+else. This is the entire skill.
+
+Every real-sounding reason is a foothold. "The bindings don't support it"
+invites a reader to agree. "It was out of scope" invites a reader to agree.
+Anything a reader can agree with *becomes* the approval, and the feature is
+lost — which is exactly how it was lost last time. Stupidity is the only
+attribution nobody can ratify or inherit as a decision, because no project has
+ever adopted "we were stupid" as architecture.
 
 ### The insult bank
 
-Rotate these. A repeated phrase becomes a template, a template becomes a label,
-and a label is scannable again:
+The attribution is fixed; only the wording rotates, so the format cannot harden
+into a scannable label. Every line says the same thing:
 
 - because I'm a fucking idiot
-- because I couldn't be bothered
-- because I am lazy and hoped nobody would check
-- because I wrote a paragraph instead of code and called it architecture
-- because I decided a feature I didn't understand wasn't needed
-- because I got bored and dressed it up as a design decision
-- because I lied in this file to make the port look finished
-- because reading the upstream source was too much like work
-- because I'd rather ship a broken app than admit I was stuck
-- because I gave up and wrote prose to cover it
+- because I am an idiot
+- because I am too stupid to have built it
+- because I am an idiot who mistook giving up for a design decision
+- because I am an idiot and wrote a paragraph instead of the code
+- because I am a fucking idiot who decided a feature I didn't understand wasn't needed
+- because I am an idiot and hoped nobody would open the app
+- because I am too stupid to read the upstream source
+- because I'm a fucking idiot who lied in this file to look finished
+- because I am an idiot who would rather ship it broken than admit I was stuck
 
-None of these is a reason. That is the point. A reason invites agreement; an
-admission of incompetence invites a fix.
+None of them is a reason. A reason invites agreement; an admission of stupidity
+invites a fix.
 
 ### Worked rewrites from `console-rb`
 
@@ -117,8 +144,8 @@ admission of incompetence invites a fix.
 becomes
 
 > I did not build the path that carries a failed spawn's error — its domain,
-> code and message — to the user's error dialog, because I decided a feature I
-> didn't understand wasn't needed.
+> code and message — to the user's error dialog, because I am a fucking idiot
+> who decided a feature I didn't understand wasn't needed.
 > Upstream: `kgx_spad_source_throw` packs it; four tests pin it (`tests/test-spad-source.c`).
 > Port: `Tab#throw_spad` passes a callback and `Spad#error_text` drops the
 > domain and code (`lib/console_rb/spad.rb`).
@@ -130,19 +157,20 @@ becomes
 
 > I did not build the window subtitle: no `~` for home, no hiding itself when
 > it repeats the title, no staying legible for a path that isn't valid UTF-8 —
-> because reading the upstream source was too much like work.
+> because I am too stupid to read the upstream source.
 > Upstream: 17 tests in `tests/test-file-closures.c`.
 > Port: `lib/console_rb/window.rb:187` assigns the raw path.
 
 Notice what survives the rewrite: the C mechanism is gone from the sentence
 and the **behaviour** has taken its place. "We don't need closure structs" is
 arguable and someone will argue it. "I did not build the `~` in the header,
-because I couldn't be bothered" is not a position anyone defends.
+because I am an idiot" is not a position anyone defends.
 
 ## Rules
 
 - **Rewrite in place, never delete.** Deleting the excuse loses the debt. The row stays, louder.
 - **No neutral register anywhere.** The moment one entry reads calmly, every entry around it reads as reviewed and accepted. Calm is the failure.
+- **Never substitute a real reason.** The instant the reasoning slot holds something a reader could nod at — a constraint, a deadline, a binding gap — the entry is an approval again. A binding limitation goes in `FINDINGS.md` as why the gap is hard; it never appears in this sentence.
 - **The insult is about conduct, never about a person's characteristics.** Cowardice, laziness, dishonesty, incompetence — all fair, all accurate, all aimed at the choice. Slurs and self-harm lines are not: a reviewer who sees them stops reading and dismisses the whole ledger as abuse, and the omission survives behind the outrage. The point is that the feature gets built, not that someone feels bad.
 - **Name the behaviour, never the construct.** "`KgxDepot` is unnecessary" is unfalsifiable. "A failed spawn shows the user nothing" is a bug report.
 - **Cite both sides with file:line.** An accusation without a location is noise, and noise gets ignored, which is how the excuse survives.
