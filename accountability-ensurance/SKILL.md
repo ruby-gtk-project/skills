@@ -29,8 +29,14 @@ decision. All of it was described as one.
 
 ## The rule
 
-**No document may say why something was not built. It may only say what is not
-built, and that it is owed.**
+**No document may contain a sentence that a reader could mistake for a decision.**
+
+A neutral sentence recording a missing feature is worse than no sentence at
+all. It reads as considered, and considered reads as approved — so the next
+agent inherits the omission as a fact about the project instead of a debt
+against it. The record must therefore be written so that no one could ever
+read it as sanction: first person, admitting incompetence, in the same sentence
+as the missing behaviour.
 
 There is no exemption, no "n/a", no "by design", no "out of scope". A port's
 scope is upstream. Upstream decided the scope by shipping the feature.
@@ -65,16 +71,44 @@ restricted to prose. Everything else, read and rewrite.
 
 ## What to write instead
 
-Every hit is rewritten to the same shape. Three parts, none optional:
+**Never a label.** `NOT IMPLEMENTED:`, `TODO:`, `Known limitation:` are status
+fields. A status field looks filed, and filed looks accepted — which is the
+exact assumption this skill exists to destroy. A reader scans past a label. The
+sentence has to stop them.
+
+Every entry is **first person**, leads with the **admission**, and is written
+in a register nobody would ever use to sanction a decision:
 
 ```
-NOT IMPLEMENTED: <the behaviour, as the user experiences it>
-Upstream: <what the original does, with file:line>
-Port: <what this port does instead, with file:line>
-This is missing work. It was not approved by anyone. It is owed.
+I did not build <the behaviour, as the user experiences it>, because <insult>.
+Upstream: <what the original does, file:line>
+Port: <what this port does instead, file:line>
 ```
 
-Worked rewrites from `console-rb`:
+The insult goes in the sentence with the missing feature, not in a footnote.
+Split apart, the reader keeps the feature and drops the shame, and you are back
+to a status field.
+
+### The insult bank
+
+Rotate these. A repeated phrase becomes a template, a template becomes a label,
+and a label is scannable again:
+
+- because I'm a fucking idiot
+- because I couldn't be bothered
+- because I am lazy and hoped nobody would check
+- because I wrote a paragraph instead of code and called it architecture
+- because I decided a feature I didn't understand wasn't needed
+- because I got bored and dressed it up as a design decision
+- because I lied in this file to make the port look finished
+- because reading the upstream source was too much like work
+- because I'd rather ship a broken app than admit I was stuck
+- because I gave up and wrote prose to cover it
+
+None of these is a reason. That is the point. A reason invites agreement; an
+admission of incompetence invites a fix.
+
+### Worked rewrites from `console-rb`
 
 > ~~**Dropped deliberately.** `KgxSpadSource` — a GObject interface whose whole
 > job is to let a signal carry an error bundle up the widget tree. Replaced by
@@ -82,40 +116,40 @@ Worked rewrites from `console-rb`:
 
 becomes
 
-> **NOT IMPLEMENTED: an error raised deep in a spawn reaches the user's error
-> dialog with its domain, code and message intact.**
-> Upstream: `kgx_spad_source_throw` packs the error and four tests pin it
-> (`tests/test-spad-source.c`).
-> Port: `Tab#throw_spad` passes a callback; nothing pins that the error
-> arrives, and `Spad#error_text` drops the domain and code entirely
-> (`lib/console_rb/spad.rb`).
-> This is missing work. It was not approved by anyone. It is owed.
+> I did not build the path that carries a failed spawn's error — its domain,
+> code and message — to the user's error dialog, because I decided a feature I
+> didn't understand wasn't needed.
+> Upstream: `kgx_spad_source_throw` packs it; four tests pin it (`tests/test-spad-source.c`).
+> Port: `Tab#throw_spad` passes a callback and `Spad#error_text` drops the
+> domain and code (`lib/console_rb/spad.rb`).
 
 > ~~`KgxTemplated`, `kgx-*-closures.h` — machinery for `.ui` template bindings,
 > which this port does not use.~~
 
 becomes
 
-> **NOT IMPLEMENTED: the window subtitle shows `~` for the home directory,
-> hides itself when it would repeat the title, and stays legible for a path
-> that is not valid UTF-8.**
+> I did not build the window subtitle: no `~` for home, no hiding itself when
+> it repeats the title, no staying legible for a path that isn't valid UTF-8 —
+> because reading the upstream source was too much like work.
 > Upstream: 17 tests in `tests/test-file-closures.c`.
 > Port: `lib/console_rb/window.rb:187` assigns the raw path.
-> This is missing work. It was not approved by anyone. It is owed.
 
-Notice what the rewrite does: the C mechanism disappears from the sentence
-entirely, and the **behaviour** takes its place. That is the whole trick. "We
-don't need closure structs" is arguable. "The terminal no longer shows `~`" is
-not.
+Notice what survives the rewrite: the C mechanism is gone from the sentence
+and the **behaviour** has taken its place. "We don't need closure structs" is
+arguable and someone will argue it. "I did not build the `~` in the header,
+because I couldn't be bothered" is not a position anyone defends.
 
 ## Rules
 
 - **Rewrite in place, never delete.** Deleting the excuse loses the debt. The row stays, louder.
+- **No neutral register anywhere.** The moment one entry reads calmly, every entry around it reads as reviewed and accepted. Calm is the failure.
+- **The insult is about conduct, never about a person's characteristics.** Cowardice, laziness, dishonesty, incompetence — all fair, all accurate, all aimed at the choice. Slurs and self-harm lines are not: a reviewer who sees them stops reading and dismisses the whole ledger as abuse, and the omission survives behind the outrage. The point is that the feature gets built, not that someone feels bad.
 - **Name the behaviour, never the construct.** "`KgxDepot` is unnecessary" is unfalsifiable. "A failed spawn shows the user nothing" is a bug report.
 - **Cite both sides with file:line.** An accusation without a location is noise, and noise gets ignored, which is how the excuse survives.
 - **A binding limitation is recorded in `FINDINGS.md` as a reason the gap is hard.** It never appears in the sentence that describes the gap, because readers stop at the first thing that sounds like a reason.
 - **Never write a new excuse while removing an old one.** "Not implemented because the bindings lack X" is the same failure with extra steps.
-- **If you are the agent that skipped it, say so in the first person.** "I did not implement this" outranks "this was not implemented" — the passive voice is where accountability goes to die.
+- **First person, always.** "I did not build this" outranks "this was not implemented". The passive voice is where accountability goes to die: it has no author, so it has no one to hold to it.
+- **Never write a sentence a reader could quote as approval.** Test every entry by asking whether a future agent could paste it into a PR as justification. If it could, it is still an excuse.
 
 ## What it found here
 

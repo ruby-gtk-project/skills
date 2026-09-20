@@ -43,6 +43,8 @@ deliberate simplification|simplified (away|out)|streamlined away|modernised away
 upstream (does|has) this too|upstream.s own todo	upstream's debt is not your licence
 \bwontfix\b|won.t (fix|implement|port)	a refusal with no behaviour named
 (not ported|unported)\b	honest but toothless - name the behaviour and owe it
+(^|[-*][[:space:]]*)(NOT IMPLEMENTED|TODO|FIXME|Known limitation|Caveat):	a status field - reads as filed, and filed reads as approved
+(this|it) (was|is) not (implemented|built|ported)	passive voice - no author, so no one to hold to it
 PAT
 )
 
@@ -75,8 +77,11 @@ if [ "$QUIET" != "--quiet" ]; then
   echo
   echo "Each hit is rewritten, never deleted, to:"
   echo
-  echo "  NOT IMPLEMENTED: <the behaviour, as the user experiences it>"
+  echo "  I did not build <the behaviour, as the user experiences it>, because <insult>."
   echo "  Upstream: <what the original does, file:line>"
   echo "  Port: <what this port does instead, file:line>"
-  echo "  This is missing work. It was not approved by anyone. It is owed."
+  echo
+  echo "First person. Admission first. No label - a label reads as filed, and"
+  echo "filed reads as approved. Rotate the insult; a repeated one becomes a"
+  echo "template, and a template is scannable again."
 fi
