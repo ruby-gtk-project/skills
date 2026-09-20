@@ -38,7 +38,18 @@ SYMBOLS=${SYMBOLS:-"$(dirname "$0")/symbols.tsv"}
 classify() {
   if [ -s "$SYMBOLS" ]; then
     awk -F'\t' -v S="$SYMBOLS" '
-      BEGIN { while ((getline line < S) > 0) { split(line, a, "\t"); k[a[1]] = a[2] } }
+      BEGIN {
+        while ((getline line < S) > 0) {
+          split(line, a, "\t"); k[a[1]] = a[2]
+          # Case-folded index, so a name reconstructed from a C macro can be
+          # snapped back to its canonical spelling. GTK_TYPE_GL_AREA can only
+          # be un-camelled to Gtk.GlArea, but the real symbol is Gtk.GLArea -
+          # and every other language spells it correctly, so without this the
+          # C side of a comparison reports one missing and one extra.
+          canon[tolower(a[1])] = a[1]
+        }
+      }
+      $2 == "widget" && !($3 in k) && (tolower($3) in canon) { $3 = canon[tolower($3)] }
       $2 == "widget" && ($3 in k) {
         t = k[$3]
         if (t == "widget")          print
