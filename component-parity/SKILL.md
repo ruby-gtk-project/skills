@@ -67,7 +67,11 @@ somewhere" is not a finding.
 ### Step 1 — Inventory both sides
 
 Use the `component-identification` skill on the upstream tree and on the port's
-`ruby` branch, scoped to the same unit. Both trees live in the same fork — the
+`ruby` branch, scoped to the same unit. **Start with its Step 1**: find
+upstream's `.blp`/`.ui` files before anything else. Their `<template>` roots
+are the unit list and the file mapping of Step 2 below, handed to you for free
+— and since the port has no declarative UI by design, they are the only place
+the two sides' component boundaries are written down explicitly. Both trees live in the same fork — the
 original on its branch, the port on `ruby`:
 
 ```sh
@@ -274,7 +278,7 @@ Among the 74 missing widget types, `Adw.NavigationView`, `Adw.NavigationPage`,
 `Adw.BottomSheet` and `Adw.PasswordEntryRow` are whole navigation and
 credential flows absent from the port. `Adw.Easing` and
 `Adw.DialogPresentationMode` in the same list are enums, not widgets — strike
-them, per `component-identification` Step 2.
+them, per `component-identification` Step 3.
 
 ## Rules
 

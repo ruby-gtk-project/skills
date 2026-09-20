@@ -53,19 +53,21 @@ srcfiles | while IFS= read -r f; do
   {
     # GtkBuilder objects AND template roots: <template parent="AdwBin">.
     # An app-defined template class (class="MyWidget") is deliberately not a
-    # row - resolve it to the file that defines it. See the skill, Step 2.
-    grep -ohE '(class|parent)="(Adw|Gtk)[A-Za-z0-9]+"' "$f" 2>/dev/null \
-      | sed -E 's/.*"(Adw|Gtk)([A-Za-z0-9]+)"/\1.\2/'
+    # row - resolve it to the file that defines it. See the skill, Step 3.
+    grep -ohE '(class|parent)="(Adw|Gtk|Vte|GtkSource|Shumate|WebKit|Panel)[A-Za-z0-9]+"' "$f" 2>/dev/null \
+      | sed -E 's/.*"(Adw|Gtk|Vte|GtkSource|Shumate|WebKit|Panel)([A-Za-z0-9]+)"/\1.\2/'
     # Vala, Python, GJS, blueprint: Adw.ActionRow
-    grep -ohE '\b(Adw|Gtk|Adwaita)\.[A-Z][A-Za-z0-9]+' "$f" 2>/dev/null \
+    grep -ohE '\b(Adw|Gtk|Adwaita|Vte|GtkSource|Shumate|WebKit|Panel)\.[A-Z][A-Za-z0-9]+' "$f" 2>/dev/null \
       | sed -E 's/^Adwaita\./Adw./'
     # Ruby: Adwaita::ActionRow / Gtk::Box
-    grep -ohE '\b(Adw|Gtk|Adwaita)::[A-Z][A-Za-z0-9]+' "$f" 2>/dev/null \
+    grep -ohE '\b(Adw|Gtk|Adwaita|Vte|GtkSource|Shumate|WebKit|Panel)::[A-Z][A-Za-z0-9]+' "$f" 2>/dev/null \
       | sed -E 's/::/./; s/^Adwaita\./Adw./'
     # gtk-rs: lowercase crate modules - gtk::Button, adw::Carousel - including
     # inside TemplateChild<gtk::Button>, which is an instance site.
-    grep -ohE '\b(gtk4?|adw|libadwaita)::[A-Z][A-Za-z0-9]+' "$f" 2>/dev/null \
-      | sed -E 's/^gtk4?::/Gtk./; s/^(adw|libadwaita)::/Adw./'
+    grep -ohE '\b(gtk4?|adw|libadwaita|vte|sourceview5?|shumate|webkit6?|panel)::[A-Z][A-Za-z0-9]+' "$f" 2>/dev/null \
+      | sed -E 's/^gtk4?::/Gtk./; s/^(adw|libadwaita)::/Adw./; s/^vte::/Vte./
+                s/^sourceview5?::/GtkSource./; s/^shumate::/Shumate./
+                s/^webkit6?::/WebKit./; s/^panel::/Panel./'
     # Blueprint bare declarations. `using Gtk 4.0` makes Gtk the implicit
     # namespace, so the whole widget tree is written unprefixed - `Box {`,
     # `MenuButton btn {`, `content: WindowHandle {`. Without this the only

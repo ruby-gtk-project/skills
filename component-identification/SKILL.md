@@ -54,7 +54,50 @@ Multiplicity lives in the counts: three `Adw.ActionRow`s in a file is
 
 ## How to identify
 
-### Step 1 — Scan
+### Step 1 — Find the declarative UI first
+
+**Before scanning anything, look for `.blp` and `.ui` files.** Where they
+exist they *are* the component inventory, and they are a far better starting
+point than any grep over source:
+
+```sh
+find <tree> \( -name '*.blp' -o -name '*.ui' \) -not -path '*/.git/*' | sort
+```
+
+A declarative file gives you, in one place and already correct, what the scan
+can only approximate from source:
+
+| | Why it beats scanning source |
+|---|---|
+| **The tree** | Nesting is literal. You can see that this `Gtk.Box` is inside that `Adw.ToolbarView`, which no flat TSV will tell you |
+| **Counts** | Each `<object>` / `Foo {` is one real widget. No factory methods, no loops, no guessing |
+| **CSS classes** | `<style><class name="flat"/></style>` and `styles ["flat"]` sit on the widget they belong to |
+| **Signals** | `<signal name="clicked" handler="on_clicked"/>` and `clicked => $on_clicked()` name the handler too |
+| **Boundaries** | One `<template class="...">` or `template $Foo:` is one component — this is your unit list, for free |
+
+So read them first, and let the result tell you how much work is left:
+
+```sh
+# the component map: every template root, i.e. every unit
+grep -l '<template\|^template ' $(find <tree> -name '*.ui' -o -name '*.blp')
+grep -hE '<template class="[^"]+" parent="[^"]+"|^template +\$?[A-Za-z]+ *:' \
+  $(find <tree> -name '*.ui' -o -name '*.blp')
+```
+
+**What this does not cover, and when to skip it.** A declarative file shows
+what is built at startup; it cannot show widgets added at runtime, conditional
+branches, or anything the source builds directly. And some upstreams have no
+declarative UI at all — gtk-rs apps often build in code, and the Ruby port
+*never* has `.ui` files by design (the house style builds widgets as memoized
+methods). So:
+
+- **Upstream with `.blp`/`.ui`** — read those first, then scan the source for what they don't cover.
+- **Upstream without them** (or the port side, always) — go straight to the scan.
+
+Either way the scan is still run on both sides, because the comparison in
+`component-parity` needs the same TSV shape from each.
+
+### Step 2 — Scan
 
 ```sh
 scripts/component-scan.sh <tree> > components.tsv
@@ -74,7 +117,7 @@ tree, so two scans diff directly. `Adwaita::ActionRow` (Ruby),
 `Adw.ActionRow` (Vala/blueprint) and `class="AdwActionRow"` (GtkBuilder) all
 normalise to `Adw.ActionRow`.
 
-### Step 2 — Read the files
+### Step 3 — Read the files
 
 The scan is a lead, not a verdict. It matches text, so it over-reports and
 under-reports in known ways, and every one of them needs a human decision:
@@ -96,12 +139,14 @@ widgets, so they belong under behaviour, not in the widget count.
 - **CSS classes from the stylesheet side.** The app's `.css` files define classes the source may apply indirectly. Read them; a class defined and never applied is dead, and a class applied and never defined is a bug worth reporting either way.
 - **Composite widgets.** A project's own `ItemRow` is a component whose parts are in another file. The inventory records the use *and* follows into the definition.
 - **Bare blueprint declarations.** `ActionRow { }` without its `Adw.` prefix inside a `.blp` is not matched.
+- **Widgets from libraries other than GTK and libadwaita.** The scan knows `Vte`, `GtkSource`, `Shumate`, `WebKit` and `Panel` as well as `Gtk`/`Adw`, but an app embedding anything else — a map view, a chart widget, a custom C library — produces no row for it. Read the `.ui` `parent=` attributes and the build file's dependencies to find out which libraries are in play before trusting the widget stream.
+- **App-defined widgets used as parents.** `<template class="KgxSimpleTab" parent="KgxTab">` means this app subclasses its own widget. Neither name is a GTK type, so neither is a row — but the inheritance is real and the port has to reproduce it. Template roots whose `parent=` is an app class are a component hierarchy; map it before comparing anything.
 - **App-defined template classes.** `<template class="PaginatorWidget" parent="AdwBin">` gives a row for `Adw.Bin` and none for `PaginatorWidget`, because it is this app's own name, not a GTK type. Every `<child>` that instantiates it is a component whose parts are in the file that defines the template — resolve it, and count the uses.
 - **Widgets from a shared factory.** A private `build_button` called from three memoized methods is one textual occurrence and three widgets on screen. Count the *call sites*, not the constructor. This is the most common way a correct port reads as a gap of two.
 - **Actions whose name is never a literal.** A port that builds `Gio::SimpleAction.new(name)` from a loop over `{'start-tour' => ..., 'next-page' => ...}` installs four actions and puts none of them in the scan, because the prefix (`win.`) is supplied by the widget and the name is a variable. Open every `add_action` / `install_action` / `SimpleAction.new` site and read the names off it. The scan's `action` stream is the least trustworthy of the four for exactly this reason.
 - **Signals connected in a loop or a helper.** Same shape as the factory case: one `connect` in a helper called per row is one row in the scan and N live connections.
 
-### Step 3 — Write the inventory
+### Step 4 — Write the inventory
 
 One `## <file>` section per component file, in the order a user meets them
 (window, then its pages, then its dialogs — not alphabetical):
