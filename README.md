@@ -5,7 +5,7 @@ Agent skills for the GNOME → Ruby GTK4 port campaign (see
 the plan).
 
 `ruby-gtk` and `ruby-gtk-testing` are how the port gets written and run. The
-other four are how it gets checked: a port is finished when the Ruby app does
+other five are how it gets checked: a port is finished when the Ruby app does
 everything the original does, and they define what "everything" means precisely
 enough to be checked.
 
@@ -16,17 +16,18 @@ enough to be checked.
 | [`test-parity`](test-parity/) | Does the port test every single thing upstream tested? |
 | [`component-identification`](component-identification/) | What UI does this app actually have? |
 | [`component-parity`](component-parity/) | Does the port's UI match the original's? |
+| [`translation-parity`](translation-parity/) | Does it say the same things, in the same 78 languages? |
 | [`accountability-ensurance`](accountability-ensurance/) | Is any of this being excused rather than built? |
 
 `component-identification` produces the inventory; `component-parity` compares
-two of them. `test-parity` stands alone. A port is done when test parity and
-component parity both hold — neither implies the other.
+two of them. `test-parity` and `translation-parity` stand alone. A port is done
+when all three parities hold — none of them implies another.
 
-`accountability-ensurance` guards all three. The parity skills have two states,
-`ported` and `gap`, and no third — because the third state is where ports go to
-die. It hunts the prose that tries to create one anyway.
+`accountability-ensurance` guards all of them. The parity skills have two
+states, `ported` and `gap`, and no third — because the third state is where
+ports go to die. It hunts the prose that tries to create one anyway.
 
-## The two definitions everything rests on
+## The three definitions everything rests on
 
 **Test parity** — the port's suite contains exactly one test for every upstream
 test: equal counts, a bijection between them, and each pair asserting the same
@@ -37,6 +38,12 @@ the number at the bottom of the test runner.
 one that matches on all three axes: same widget type in the same number, same
 CSS classes, same signals and actions. Compared per component, never as app-wide
 totals. Recorded in `COMPONENT_PARITY.md`.
+
+**Translation parity** — the port emits the same gettext catalogue as upstream:
+the same `(msgctxt, msgid)` keys, byte for byte, under the same domain name,
+with upstream's whole `po/` directory carried across. Byte-identical because a
+msgid is a hash key, and one reworded label silently discards every language's
+translation of it. Recorded in `TRANSLATION_PARITY.md`.
 
 ## Install
 
@@ -53,15 +60,22 @@ in the scaffold or in a fork gets overwritten.
 
 ## The scans
 
-Both scripts are grep over source across Vala, C, Python, GJS, Rust, Ruby,
+All three scripts are grep over source across Vala, C, Python, GJS, Rust, Ruby,
 GtkBuilder XML and blueprint. **Look for `.blp`/`.ui` files before running
-either** — where they exist they are the component tree, already nested, and
+them** — where they exist they are the component tree, already nested, and
 `component-identification` Step 1 says how to read them. They are **leads, not verdicts** — each skill's
-"read the files" step is not optional, and both skills document exactly how
-their scan over- and under-reports.
+"read the files" step is not optional, and each skill documents exactly how
+its scan over- and under-reports.
+
+`msgid-census.sh` also reads `po/*.po`, `.desktop.in`, AppStream metainfo and
+GSettings schemas, because a quarter of a GNOME app's messages live outside its
+source files. Point it at `<upstream>/po` and the census becomes a check on
+itself: the difference against the source census must be explainable entirely
+as strings deleted since the last `msgmerge` and strings added since.
 
 ```sh
 test-parity/scripts/test-census.sh <tree>              # file, test id, line
+translation-parity/scripts/msgid-census.sh <tree>      # msgctxt, msgid, kind, file:line
 component-identification/scripts/gir-symbols.sh > scripts/symbols.tsv        # once: the GTK symbol table
 component-identification/scripts/component-scan.sh <tree>  # file, kind, value, count
 ```
