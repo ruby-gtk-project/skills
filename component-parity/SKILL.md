@@ -43,6 +43,22 @@ And per-component rather than per-app, because parity is a claim about
 *correspondence*. Totals cannot distinguish "ported the preferences dialog" from
 "ported forty buttons scattered anywhere".
 
+### Nothing authorises a skip
+
+A component, a CSS class, a signal or an action either has a counterpart in the
+port — which you **name and locate** — or it is a gap. No document creates a
+third option. The port's own `PORTING.md` is useful for *navigation* (its
+architecture table is the file mapping) and carries no authority over scope:
+it is written by the port, about the port, and citing it to excuse the port's
+own missing work is circular.
+
+"C-specific plumbing", "not applicable", "does not carry over" and "the
+bindings do not support it" are all gaps. A binding limitation is a reason a
+gap is hard — record it in `FINDINGS.md` and leave the row a gap.
+
+What follows is different: these are the same thing spelled differently, and
+each one still requires you to say **where** you found it.
+
 ### What is not a parity failure
 
 Ruby bindings rename things, and the port is not obliged to mirror the
@@ -60,7 +76,8 @@ by naming where the thing lives, not gaps:
   reason. Do not make this judgement silently.
 
 A correspondence that is asserted but not located is a gap. "Probably built
-somewhere" is not a finding.
+somewhere" is not a finding, and neither is "the port does this differently"
+without naming the file and line where it does it.
 
 ## How to prove it
 

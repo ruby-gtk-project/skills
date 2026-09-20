@@ -37,18 +37,27 @@ knowledge silently and gets a green suite for it. Counting is the cheapest
 check that catches it, and the name-by-name census is what makes the count
 mean something.
 
-### The one legitimate exception, and how it is handled
+### Nothing authorises a skip
 
-Some upstream tests pin language plumbing the port does not have: a Vala
-`GObject` construct block, a manual `unref`, a C string-builder. These do not
-vanish. They are **substituted**: the ledger row keeps the upstream test, marks
-it `substituted`, names the Ruby test that stands in its place, and says in one
-line why the direct port is meaningless. The count is preserved — a substituted
-test still has exactly one Ruby test opposite it.
+There are exactly two states: **`ported`** (a named port test pins the whole
+property) and **`gap`** (anything else). There is no third state, and no
+document, decision or rationale can create one.
 
-There is no `skipped` state, no `n/a` state, and no unticked row that stays
-unticked. An upstream test with nothing opposite it is a gap, and a port with
-gaps does not have test parity.
+In particular:
+
+- **A note in the port's own `PORTING.md` is not authority.** It is written by the port, about the port. Citing it to excuse the port's own missing work is circular — the same hand that skipped the implementation wrote the line permitting the skip. Read `PORTING.md` to find out *where* things live; never to find out what you are allowed to leave out.
+- **"C-specific plumbing" is not an exemption.** An upstream test of a closure struct or a GObject interface exists because some behaviour depended on it. Ruby does not need the struct; the user still needs the behaviour. The row becomes a gap whose Purpose states the *behaviour*, so someone can write the Ruby test that pins it.
+- **A partially-ported test is a gap.** If upstream pins seven cases and the port pins one, that property does not have parity. Half a test is not half a pass.
+- **There is no `n/a`, no `not applicable`, no `does not carry over`, no `skipped`.** Every one of those is a gap wearing a justification.
+
+A test may be written differently in Ruby than in C — a different framework, a
+different formulation, GC instead of an explicit refcount check. That is fine
+and it is still `ported`, because a real named test pins the property. The
+distinction that matters is not *how* the port tests it but *whether* it does.
+
+Each gap carries one more thing: the **behaviour still owed**, phrased as
+something the app does for a person. "A failed spawn shows the user an error"
+is a behaviour. "`KgxDepot` exists" is not.
 
 ## How to establish it
 
@@ -164,6 +173,7 @@ and like `PORTING.md` it is the source of truth — not a summary of one.
 | Upstream tests | 34 |
 | Ported | 34 |
 | Gaps | 0 |
+| Test command | `rake test` |
 
 ## Suite: cli/argument_parser (15 tests)
 
@@ -172,11 +182,14 @@ and like `PORTING.md` it is the source of truth — not a summary of one.
 | 1 | `/cli/argument_parser/add_minimal` | `add` with only `--content` fills the rest from defaults | `test/cli/test_argument_parser.rb#test_add_minimal` | ported |
 | 2 | `/cli/argument_parser/unknown_option` | an unrecognised flag is an error, not a silent ignore | `test/cli/test_argument_parser.rb#test_unknown_option` | ported |
 | 3 | `/cli/argument_parser/invalid_pin_value` | `--pin` rejects anything but true/false | — | **gap** |
+
+Gaps carry a sixth column, `Behaviour still owed`, naming what a Ruby test must
+pin — in terms of what the app does for a person.
 ```
 
 One row per upstream test, forever. Rows are never deleted — a ported test that
-gets rewritten keeps its row and changes its `Port test` cell. States are
-`ported`, `substituted` (with the reason in the Purpose cell) or `gap`.
+gets rewritten keeps its row and changes its `Port test` cell. The state is
+`ported` or `gap`. There is no third state.
 
 ### Step 3 — Port the gaps
 
@@ -264,36 +277,13 @@ A fork carries up to four documents, and they are not interchangeable:
 | `COMPONENT_PARITY.md` | **what was built** — the three-axis component comparison |
 | `FINDINGS.md` | **binding defects** — ruby-gnome bugs and workarounds found en route |
 
-`PORTING.md` wins on questions of scope. If it records a component as
-deliberately dropped, that decision is already made and this ledger records the
-consequence rather than relitigating it.
+`PORTING.md` describes *where things went*, and that makes it useful for
+navigation — its architecture table is the file mapping. It does **not** decide
+what the port owes. Upstream decides that, by having written the test.
 
-### The `dropped` state
-
-Upstream tests covering deliberately-dropped code are the one case the
-`ported` / `substituted` / `gap` triple cannot express: the code under test does
-not exist in the port, and no Ruby test stands in for it, so `substituted` is a
-lie and `gap` turns an accepted architectural decision into a permanent
-failure. console-rb drops `KgxDepot`, `KgxDespatcher`, `KgxSpadSource` and
-`KgxTemplated`, which carry 14 upstream tests between them.
-
-So: `dropped(<PORTING.md section>)`. The row stays, the Purpose cell stays, and
-the `Port test` cell cites the `PORTING.md` section instead of a test. Dropped
-rows are counted separately from gaps in the header:
-
-```
-| Upstream tests | 127 |
-| Ported | 98 |
-| Dropped (see PORTING.md) | 14 |
-| Gaps | 15 |
-```
-
-**A `dropped` row with no corresponding `PORTING.md` entry is not allowed.**
-Write the `PORTING.md` entry first; otherwise `dropped` becomes the `skipped`
-state this skill exists to refuse.
-
-Cite `FINDINGS.md` from a row when a binding defect is *why* a test is
-substituted — never copy its content into this ledger.
+Cite `FINDINGS.md` from a gap row when a binding defect is *why* that gap is
+hard to close — never copy its content into this ledger, and never let it
+convert the gap into a pass.
 
 ## Worked example — planify-rb
 
@@ -321,9 +311,13 @@ ceiling on what the port may test.
   — that is the test doing its job.
 - Never merge two upstream tests into one Ruby test to save typing. The count
   is the check; collapsing rows disables it.
+- Never let a row leave the ledger without either a named port test or a stated
+  behaviour still owed. A row with neither is how a skip gets laundered.
 - Extra Ruby tests with no upstream counterpart are welcome and are listed in
   an `## Extra` section below the tables, outside the count.
 - A test that cannot be made to pass is a gap plus an issue, not a comment-out.
+- A binding limitation is a reason a gap is *hard*, never a reason it is closed.
+  Record it in `FINDINGS.md` and leave the row a gap.
 - If the upstream app has no tests at all, say exactly that: parity is 0/0, it
   is met trivially, and it means the port has no inherited safety net — which
   belongs in the report, not left as an implication.
