@@ -66,59 +66,79 @@ def messages_in(tree)
   end
 end
 
-# Count translated and untranslated entries in one .po.
+# Count the messages in one .po as `msgfmt --statistics` would: translated,
+# fuzzy, untranslated.
 #
-# Three things make this more than a grep for `msgstr ""`, and getting any of
-# them wrong moves the number by hundreds:
+# Entry-at-a-time rather than line-at-a-time, because four things make a line
+# scan wrong and each of them moves the number by hundreds:
 #
-#   - a long msgstr is written as `msgstr ""` followed by continuation lines,
-#     so the first line of a *translated* entry looks exactly like an empty one;
-#   - `msgstr[0]`/`msgstr[1]` are separate entries of one plural message and
-#     each counts;
-#   - the file header is an entry whose msgid is empty. It carries the
-#     Plural-Forms rule and the translator's name, not a translation, and it
-#     is excluded - otherwise every language reports one string more than it has.
+#   - a long msgstr is written as `msgstr ""` plus continuation lines, so the
+#     first line of a translated entry looks exactly like an empty one;
+#   - `#~` marks an obsolete entry, kept in the file for reference and left
+#     out of the .mo. gnome-contacts has 14 fuzzy flags on obsolete entries
+#     against 6 on live ones, so counting them roughly triples the figure;
+#   - the file header is an entry whose msgid is empty - it holds Plural-Forms
+#     and the translator's name, not a translation;
+#   - `#, fuzzy` marks a translation msgmerge guessed from a similar msgid.
+#     msgfmt leaves it out of the .mo, so the user sees English however full
+#     the msgstr looks. It is neither translated nor untranslated: it is the
+#     one category a translator can clear without writing anything new.
+#
+# A plural message counts once, not once per form, and is translated only when
+# every form is filled.
 def po_counts(path)
-  translated = untranslated = 0
-  msgid_empty = true
-  pending = false
-  filled = false
+  translated = untranslated = fuzzy = 0
 
-  flush = lambda do
-    if pending && !msgid_empty
-      filled ? translated += 1 : untranslated += 1
-    end
-    pending = false
-    filled = false
-  end
+  # CRLF is normalised first. It is not hypothetical: gnome-contacts' th.po
+  # has CRLF terminators and every other .po has LF, so a blank-line split on
+  # the raw bytes finds one giant entry there and reports Thai as having no
+  # messages at all - silently, because the file parses fine everywhere else.
+  File.read(path).gsub("\r\n", "\n").split(/\n[ \t]*\n/).each do |entry|
+    lines = entry.lines.map(&:chomp)
+    next if lines.any? { |l| l.start_with?('#~') }        # obsolete
+    next unless lines.any? { |l| l.start_with?('msgstr') }
 
-  File.foreach(path) do |line|
-    case line
-    when /^msgid_plural\s/ then next
-    when /^msgid\s+(.*)$/
-      flush.call
-      msgid_empty = (Regexp.last_match(1).strip == '""')
-    when /^msgstr(\[\d+\])?\s+(.*)$/
-      flush.call
-      pending = true
-      filled = (Regexp.last_match(2).strip != '""')
-    when /^\s*"/
-      # A continuation line belongs to whichever of msgid/msgstr is open. The
-      # msgid case is the one that bites: a long message is written as
-      # `msgid ""` plus continuation lines, which is indistinguishable from
-      # the file header until the next line arrives.
-      if pending
-        filled = true if line.strip != '""'
-      else
-        msgid_empty = false if line.strip != '""'
+    # The header is the entry whose msgid is empty. Accumulate msgid and its
+    # continuation lines and stop at msgstr - a continuation line looks the
+    # same whichever field it belongs to, and letting msgstr's lines land in
+    # msgid makes every header look like a real message.
+    msgid = []
+    in_msgid = false
+    lines.each do |l|
+      if l.start_with?('msgid ')
+        in_msgid = true
+        msgid << l.sub(/^msgid\s*/, '')
+      elsif in_msgid && l.strip.start_with?('"')
+        msgid << l.strip
+      elsif in_msgid
+        break
       end
-    else
-      flush.call
     end
-  end
-  flush.call
+    next if msgid.empty? || msgid.all? { |m| m.strip == '""' }   # header
 
-  [translated, untranslated]
+    if lines.any? { |l| l.start_with?('#,') && l.include?('fuzzy') }
+      fuzzy += 1
+      next
+    end
+
+    # Walk the msgstr blocks; a form is filled if any of its lines carries
+    # something between the quotes.
+    filled = []
+    in_msgstr = false
+    lines.each do |l|
+      if l.start_with?('msgstr')
+        filled << (l.sub(/^msgstr(\[\d+\])?\s*/, '').strip != '""')
+        in_msgstr = true
+      elsif in_msgstr && l.strip.start_with?('"')
+        filled[-1] ||= (l.strip != '""')
+      else
+        in_msgstr = false
+      end
+    end
+    filled.all? ? translated += 1 : untranslated += 1
+  end
+
+  [translated, untranslated, fuzzy]
 end
 
 # The language set is counted from the .po files rather than from LINGUAS,
@@ -132,15 +152,17 @@ def languages_in(tree)
   linguas_path = File.join(po_dir, 'LINGUAS')
   linguas = File.exist?(linguas_path) ? File.read(linguas_path).split.reject { |l| l.start_with?('#') }.sort : nil
 
-  translated, untranslated = 0, 0
+  translated = untranslated = fuzzy = 0
   Dir.glob(File.join(po_dir, '*.po')).each do |f|
-    t, u = po_counts(f)
+    t, u, z = po_counts(f)
     translated += t
     untranslated += u
+    fuzzy += z
   end
 
   out = { 'count' => files.size, 'translated_strings' => translated,
-          'untranslated_strings' => untranslated, 'list' => files }
+          'untranslated_strings' => untranslated, 'fuzzy_strings' => fuzzy,
+          'list' => files }
   unless linguas.nil?
     out['linguas_matches_files'] = (linguas == files)
     out['only_in_linguas'] = linguas - files unless (linguas - files).empty?

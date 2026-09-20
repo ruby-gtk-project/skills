@@ -204,6 +204,67 @@ row.title = _(type)                                     # translated, at display
 Getting this backwards gives a catalogue entry nobody looks up, or a lookup at
 load time that uses the locale before it is set.
 
+## Three things `rxgettext` will not do for you
+
+### Translator comments are dropped by default
+
+A `#. Translators:` comment is how upstream tells a translator that "Export"
+is a verb, or that the `.desktop` `Keywords` semicolons must not be localised.
+gnome-contacts has six, and every one of them prevents a specific, plausible
+mistranslation.
+
+The gem's Ruby parser sets `use_comment = false`, so `rxgettext` extracts none
+of them unless told to:
+
+```ruby
+task.xgettext_options = ['--add-comments=TRANSLATORS']
+```
+
+and in the source the comment goes on the line before the marker:
+
+```ruby
+# TRANSLATORS: Export refers to the verb
+_("Export")
+```
+
+Carry all six across when you port the strings they annotate. They are part of
+the message, and losing them is invisible until a translation comes back wrong.
+
+### `c-format` flags are not checked
+
+gnome-contacts' po files carry **1,176 `#, c-format` flags**. GNU `msgfmt -c`
+uses them to verify that every translation has the same format specifiers as
+its msgid — the check that stops a translator's `%s` typo from crashing the
+app at runtime in one language. The gem's tooling does not handle format flags
+at all: it neither writes nor validates them.
+
+Since the port reuses upstream's msgids, the flags are already in the po files
+and `rmsgmerge` preserves them. Keep GNU `msgfmt -c` in the build to get the
+check back — it is build-time only, so it belongs in `nativeBuildInputs` and
+not in the runtime closure:
+
+```sh
+for po in po/*.po; do msgfmt -c --check-format -o /dev/null "$po" || exit 1; done
+```
+
+A port that compiles only with `rmsgfmt` ships 78 unchecked catalogues.
+
+### RTL is not a translation problem until it is
+
+`ar`, `he`, `fa` and `ug` all ship. GTK4 mirrors layout automatically, but only
+for widgets whose spacing is expressed in direction-aware terms — `margin_start`
+and `margin_end`, not `margin_left`/`margin_right`, and `halign: :start` rather
+than a hardcoded left. Ruby ports tend to reach for whichever the binding
+exposes first.
+
+Run one of the four as part of the on-screen check:
+
+```sh
+LANGUAGE=ar LC_ALL=ar_AE.UTF-8 ruby bin/gnome-contacts-rb
+```
+
+A screenshot is enough — the failure is visible, never subtle.
+
 ## Non-Ruby files
 
 Three message sources are not Ruby and are not handled by the gem:

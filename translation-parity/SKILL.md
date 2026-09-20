@@ -34,7 +34,7 @@ said produces a port with 217 messages and zero translations.
 
 A GNOME app's `po/` directory is the largest body of donated human work in the
 repository and the only part of it no developer can reproduce. gnome-contacts
-carries 78 languages and 15,352 translated strings, contributed over fourteen
+carries 78 languages and 14,898 translated strings, contributed over fourteen
 years by people who are mostly not programmers and mostly cannot be asked
 again. The port inherits all of it for free — *if and only if* its English is
 byte-identical to upstream's. One reworded label silently discards 78
@@ -124,18 +124,42 @@ comm -3 de.keys src.keys
 
 The two sets will not be identical and **that is the expected result**, because
 a `.po` file is a snapshot of the last `msgmerge`. Every line of the difference
-must be explainable as one of exactly two things:
+must be explainable as one of exactly three things, and the third is the one
+worth looking for:
 
 - **only in the po** — a string upstream has since deleted. gnome-contacts has
-  two (`Can't import: no contacts found`, `Change Addressbook`).
-- **only in the source** — a string added since that language was last merged.
-  gnome-contacts has four (`Export`, `Exported %d contact`,
-  `Imported %u contact`, `Processing contacts…`).
+  two: `Can't import: no contacts found`, `Change Addressbook`.
+- **only in the source, present in some other language's po** — a string added
+  since *this* language was last merged. `Export` is in 9 of the 78 po files,
+  `Processing contacts…` in 1.
+- **only in the source, present in _no_ po at all** — a string that has never
+  been extracted, in any language, ever. This is a bug, upstream, today.
 
-A difference you cannot explain that way is a scanner miss, not a stale
-catalogue, and you fix it by reading the file before writing any ledger. Known
-under-reports: a msgid built by concatenating literals across lines, and a
-marker whose first argument is a variable rather than a literal. Both are
+Check the third case explicitly, because nothing else will:
+
+```sh
+comm -13 <(scripts/msgid-census.sh up/po | cut -f2 | sort -u) \
+         <(cut -f2 upstream-msgids.tsv | sort -u)
+```
+
+gnome-contacts returns two — `Exported %d contact` and `Imported %u contact`.
+Their files, `src/contacts-import-operation.vala` and
+`src/io/contacts-io-vcard-export-operation.vala`, are **missing from
+`po/POTFILES.in`**, so `xgettext` has never read them and no translator has
+ever been offered those strings. Upstream's own
+`.gitlab/ci/check-potfiles.sh` passes, because it greps for
+`\(gettext\|[^I_)]_\)(` — a marker with `(` immediately after it — and both
+files write `ngettext ("Imported %u contact",` with a space, which is ordinary
+Vala style.
+
+Carry those strings into the port anyway, and list the port's file in its
+`POTFILES.in`. The port then offers a translation upstream cannot, which is
+the right direction for the difference to run. Report the upstream bug too.
+
+A difference you cannot explain as one of the three is a scanner miss, not a
+stale catalogue, and you fix it by reading the file before writing any ledger.
+Known under-reports: a msgid built by concatenating literals across lines, and
+a marker whose first argument is a variable rather than a literal. Both are
 invisible to any regex and both are found by this cross-check.
 
 **Read the output as a lead, not a verdict.** Then open the files. The census
@@ -164,7 +188,7 @@ cut -f1,2 port-msgids.tsv     | sort -u > port.keys
 wc -l < up.keys                                  # 1. messages (distinct keys)   217
 wc -l < upstream-msgids.tsv                      # 2. occurrences (call sites)   260
 ls up/po/*.po | wc -l                            # 3. languages                   78
-ruby scripts/catalogue.rb up --role upstream     # 4. translated strings      15,352
+ruby scripts/catalogue.rb up --role upstream     # 4. translated strings      14,898
 cut -f1,2 upstream-msgids.tsv | sort | uniq -c | sort -rn   # 5. uses per message
 ```
 
@@ -197,7 +221,7 @@ site, a **component** row — never a translation row that the key set says is
 `ported`.
 
 **3 and 4 — languages and translated strings.** These are the inherited asset,
-and the port either carries them or destroys them. 78 and 15,352 go in the
+and the port either carries them or destroys them. 78 and 14,898 go in the
 header as a pair with what the port ships, because `0 of 78` is the headline
 finding of an untranslated port and a raw message count hides it completely.
 Count `.po` files rather than trusting `LINGUAS` — a language present in one
@@ -208,15 +232,11 @@ diff <(ls up/po/*.po | xargs -n1 basename -s .po | sort) <(sort up/po/LINGUAS)
 ```
 
 Take the translated-string count from `catalogue.rb` rather than counting
-`msgstr` lines. `grep -c '^msgstr'` over gnome-contacts' `po/` gives 15,703,
-which is 351 too many and wrong three separate ways: it counts the 78 file
-headers, which hold `Plural-Forms` and a translator name rather than a
-translation; it counts the 273 entries whose `msgstr` is empty as translated;
-and `grep -c '^msgstr "..*"'` — the obvious correction — swings 600 the other
-way, because a long translation is written as `msgstr ""` followed by
-continuation lines and so looks empty on its first line. The right number for
-gnome-contacts is **15,352 translated and 273 untranslated over 15,625
-entries**, and those three figures reconcile. Report one that does.
+`msgstr` lines; **What else lives in `po/`** below is why every obvious
+shortcut is wrong by hundreds. The figures for gnome-contacts are **14,898
+translated, 259 untranslated and 6 fuzzy over 15,163 messages**, and they
+reconcile in all 78 files against `msgid` lines minus one header each. Report
+numbers that reconcile — a count nobody can arrive at twice is not a metric.
 
 **5 — uses per message**, sorted descending, is the porting order. Work down
 it and the port's most-repeated strings land first.
@@ -267,8 +287,9 @@ totals:
   with_context: 11
 languages:
   count: 78                 # .po files, not LINGUAS
-  translated_strings: 15352
-  untranslated_strings: 273
+  translated_strings: 14898
+  untranslated_strings: 259
+  fuzzy_strings: 6          # non-empty, and still English at runtime
   linguas_matches_files: true
   only_in_linguas: []       # present only when non-empty
   only_in_po_files: []
@@ -367,7 +388,7 @@ It is the contract, not a summary of one. Commit both files.
 | Extra (untranslated) | 0 |
 | Upstream occurrences | 260 across 217 messages (19 reused) |
 | Port occurrences | 0 |
-| Upstream languages | 78 `.po` files, 15,352 translated strings |
+| Upstream languages | 78 `.po` files, 14,898 translated, 259 untranslated, 6 fuzzy |
 | Languages shipped by the port | 0 |
 | Build command | `rake gettext:mo` |
 
@@ -449,7 +470,7 @@ Report every metric, not an adjective — and report them as pairs against
 upstream, because a lone number cannot be read:
 
 ```
-217/217 messages · 260/260 occurrences · 78/78 languages · 15,352 strings · de verified on screen
+217/217 messages · 260/260 occurrences · 78/78 languages · 14,898 strings · de verified on screen
 ```
 
 That is a claim someone can re-run. "Fully localised" is not. Occurrences are
@@ -465,6 +486,94 @@ met trivially, and the port inherits no catalogue. Then say the second half,
 because it is the finding: any user-visible string the port adds is
 English-only, and the port has no `po/` for anyone to contribute to. Do not
 build empty tables.
+
+## What else lives in `po/`
+
+The message set is not the whole directory, and four of the things beside it
+change the numbers or break the build. All four are real in gnome-contacts.
+
+### Fuzzy entries are untranslated
+
+`#, fuzzy` marks a translation `msgmerge` **guessed** by matching a changed
+msgid against a similar old one. Both GNU `msgfmt` and the gem's `rmsgfmt`
+leave fuzzy entries out of the `.mo` — the gem's parser defaults
+`ignore_fuzzy` to true and prints `Warning: fuzzy message was ignored` — so
+the user sees English no matter how full the `msgstr` looks.
+
+Count them as their own category, never as translated. They are also the one
+category a translator clears without writing anything new, which makes them
+the cheapest work in the directory and worth surfacing: gnome-contacts has
+**6**, in `af`, `ga` and `fa`.
+
+### Obsolete entries are not entries
+
+`#~` marks an entry kept in the file for reference after its msgid left the
+source. `msgfmt` ignores the whole block. They matter here only because they
+inflate every naive count: of gnome-contacts' 21 `fuzzy` flags, **14 sit on
+obsolete entries and one on a file header**, leaving the 6 that are real. A
+scan that does not skip `#~` reports three and a half times the fuzzy work.
+
+### One file in 78 will have CRLF line endings
+
+`po/th.po` has CRLF terminators and the other 77 have LF. Nothing warns you:
+`msgfmt` accepts it, `git` shows nothing, and every editor opens it. But a
+tool that splits entries on `\n\n` finds one enormous entry and reports Thai
+as having **zero** messages, which reads as a language that was never
+translated rather than a file that was never normalised. Normalise on read.
+Do not "fix" the file — rewriting 220 entries' line endings makes a diff no
+translator can review, for no gain.
+
+### `POTFILES.in` completeness is a CI check, not a convention
+
+A file with translatable strings that is missing from `POTFILES.in` is not an
+error. `xgettext` simply never reads it, the strings never reach the `.pot`,
+no translator ever sees them, and the app ships them in English while every
+count in this skill says parity holds — because the census scans *source*, not
+POTFILES. Upstream guards this with `.gitlab/ci/check-potfiles.sh`, which greps `src/`
+and `data/ui/` for gettext keywords and fails if a hit is absent from
+`POTFILES.in`. **It has a hole**, and gnome-contacts is falling through it
+right now: the grep is `\(gettext\|[^I_)]_\)(`, requiring `(` immediately
+after the marker, so `ngettext ("Imported %u contact",` — a space before the
+paren, which is normal Vala — matches nothing. Two files are unlisted, the CI
+job is green, and two strings have never reached a single translator.
+
+**The port needs this check and must not copy that regex.** Reuse the census
+instead, which tolerates the whitespace because it was written to read seven
+languages' spacing conventions:
+
+```sh
+comm -13 <(grep -v '^#' po/POTFILES.in | sort) \
+         <(scripts/msgid-census.sh . | cut -f4 | cut -d: -f1 | grep -v '^po/' | sort -u)
+```
+
+Anything printed is a file whose strings are invisible to translators. Wire it
+into the same target that runs the tests. Run it against upstream once too —
+that is how the two missing files above were found.
+
+`POTFILES.skip` does not carry over. Upstream's lists 47 generated `.c` files
+that valac emits beside the Vala sources, so that the check does not demand
+they be translated twice. A Ruby port generates nothing, so its `POTFILES.skip`
+is empty or absent — and if you copied upstream's across unchanged, delete it:
+it names files the port does not have.
+
+### The catalogue is a snapshot, and it goes stale
+
+Translations are not written in this repository. They arrive through
+[l10n.gnome.org](https://l10n.gnome.org), where each language team works
+against **upstream**, not against the fork. A fork is not registered there and
+never will be, which has two consequences worth stating plainly rather than
+discovering later:
+
+- **Upstream's `po/` keeps improving and the port's copy does not.** Refreshing
+  is `git checkout <upstream-branch> -- po/` followed by a merge against the
+  port's message set, and it is worth doing whenever upstream's catalogue
+  moves. Record the upstream sha you last took it from; that is what makes the
+  next refresh a diff rather than an archaeology exercise.
+- **Any message the port invents will never be translated by anyone.** This is
+  the concrete cost behind the `## Extra` section and behind the rule against
+  rewording: a string that is not upstream's is a string with a permanent
+  audience of one language. It is not a reason never to add one; it is the
+  reason to know you are adding one.
 
 ## How this ledger relates to the others
 
@@ -504,10 +613,18 @@ led by `_Cancel` at nine call sites, `Contacts` at six, `Select a Contact` and
 `_Done` at five. Of the 217, **8 are plurals** and **11 carry a msgctxt**, all
 of them `"shortcut window"`.
 
-`po/` holds **78** `.po` files and **15,352** translated strings, and `LINGUAS`
-matches the file list exactly. Completeness ranges from `eu` at 100% through
-`fr` at 94% to `ab` at 22% — all 78 ship, because untranslated entries fall
-back to the msgid and a deleted language starts its next contributor at zero.
+`po/` holds **78** `.po` files carrying **14,898 translated, 259 untranslated
+and 6 fuzzy** over 15,163 messages, and `LINGUAS` matches the file list
+exactly. Completeness ranges from `eu` at 100% through `fr` at 94% to `ab` at
+22% — all 78 ship, because untranslated entries fall back to the msgid and a
+deleted language starts its next contributor at zero.
+
+Two of the 217 messages — `Exported %d contact` and `Imported %u contact` —
+appear in **no** `.po` file at all, because their two source files are missing
+from `POTFILES.in` and the CI check that should catch that cannot see a
+`ngettext (` with a space in it. The port inherits those as ordinary gaps and
+can close them properly, which is worth doing: it is the one place the port
+can hand translators something upstream never did.
 
 The `ruby` branch @ `13b5ba3` has **no `po/` directory**, no gettext dependency,
 and the census of it returns **zero rows**. So the ledger opens at
