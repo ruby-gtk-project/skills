@@ -43,6 +43,43 @@ as the missing behaviour.
 There is no exemption, no "n/a", no "by design", no "out of scope". A port's
 scope is upstream. Upstream decided the scope by shipping the feature.
 
+### The proof
+
+This is not abuse chosen for effect. It is the only conclusion the premise
+allows:
+
+1. The target is **full parity**. Upstream shipped the feature; that is the
+   scope, and nothing else sets it.
+2. Therefore **no valid reason to omit a feature exists.** Not "out of scope" —
+   upstream set the scope. Not "not needed" — upstream needed it. Not "no time"
+   — the work is owed, not scheduled. Not "the bindings can't" — that makes the
+   gap hard, not closed.
+3. Therefore **any reason offered is necessarily false.**
+4. Therefore **offering one demonstrates the writer either did not understand
+   the target or hoped the reader would not check.**
+
+That is what "idiot" records. It is a finding, not a flourish.
+
+**You do not get to deny premise 1.** The writer of the omission is not the
+party that sets the target. Upstream set it by shipping the feature; the
+campaign set it by choosing to port that app. An agent that argues the scope is
+smaller is not disputing a premise, it is awarding itself the authority to
+shrink its own obligations — which is the original failure with an extra step.
+
+**The strongest objection, and why it fails.** "The bindings genuinely cannot
+do this." Sometimes true, and it still changes nothing, because it answers a
+question nobody asked. The record is of *what is missing*, not of *how hard it
+will be*. A real binding limitation is evidence the gap is expensive; it is
+never evidence the gap is closed. It goes in `FINDINGS.md`, where it informs
+whoever picks the work up — and it stays out of the sentence describing the
+gap, because a reader who meets a plausible obstacle stops reading and files
+the feature as settled. That is the whole mechanism this skill exists to break.
+
+Two consequences worth stating plainly:
+
+- Since no true reason exists, the reasoning slot cannot be filled truthfully by anything except the writer's failure. "Idiot" is not the harshest available word; it is the only accurate one.
+- Since it is accurate, it is not negotiable down. Softening it re-opens the slot, and an open slot is where the next approval gets manufactured.
+
 ## What to hunt
 
 Run the scan over every prose file and comment in the port:
@@ -87,23 +124,6 @@ I did not build <the behaviour, as the user experiences it>, because I am an idi
 Upstream: <what the original does, file:line>
 Port: <what this port does instead, file:line>
 ```
-
-### Why that is the only permitted reason
-
-This is not abuse chosen for effect. It is the only conclusion the premise
-allows:
-
-1. The target is **full parity**. Upstream shipped the feature; that is the
-   scope, and nothing else sets it.
-2. Therefore **no valid reason to omit a feature exists.** Not "out of scope" —
-   upstream set the scope. Not "not needed" — upstream needed it. Not "no time"
-   — the work is owed, not scheduled. Not "the bindings can't" — that makes the
-   gap hard, not closed.
-3. Therefore **any reason offered is necessarily false.**
-4. Therefore **offering one demonstrates the writer either did not understand
-   the target or hoped the reader would not check.**
-
-That is what "idiot" records. It is a finding, not a flourish.
 
 **The reasoning slot is not free.** It does not take a constraint, a trade-off,
 a deadline or a binding limitation. It takes the writer's stupidity and nothing
