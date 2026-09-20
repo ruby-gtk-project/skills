@@ -720,6 +720,7 @@ discovering later:
 |---|---|
 | `PORTING.md` | **what was ported** — the enumerated units, their state, the cursor |
 | `TEST_PARITY.md` | **what was tested** — the test census and bijection |
+<<<<<<< HEAD
 | `COMPONENT_PARITY.md` | **what was built** — the four-axis component comparison |
 | `TRANSLATION_PARITY.md` | **what it says, and in how many languages** — this census |
 | `FINDINGS.md` | **binding defects** — ruby-gnome bugs and workarounds found en route |
@@ -738,6 +739,19 @@ of either must be able to see it. Conversely a marked string in a widget the
 port never built is a row here that can never be `ported` — it waits on the
 component, and this ledger says so by naming the component gap in its
 `Port site` cell.
+=======
+| `COMPONENT_PARITY.md` | **what was built** — the three-axis component comparison |
+| `TRANSLATION_PARITY.md` | **what it says, and in how many languages** — this census |
+| `FINDINGS.md` | **binding defects** — ruby-gnome bugs and workarounds found en route |
+
+Component parity and translation parity overlap and neither implies the other.
+A port can build the identical `Adw.ActionRow` with an identical label string
+and still have zero translation parity, because `COMPONENT_PARITY.md` compares
+widget type, CSS classes and signals — not whether the label went through
+`_()`. Conversely a marked string in a widget the port never built is a
+translation row that can never be `ported`; that row waits on the component,
+and the ledger says so by naming the component gap in its `Port site` cell.
+>>>>>>> 5ef8cf9135e493a12cb3c1262ca65315d5e8401d
 
 Cite `FINDINGS.md` from a gap row when a binding defect is *why* a gap is hard
 to close. Never let it convert the gap into a pass.

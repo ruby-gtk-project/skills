@@ -15,7 +15,11 @@ enough to be checked.
 | [`ruby-gtk-testing`](ruby-gtk-testing/) | Does the app actually run and do the thing? |
 | [`test-parity`](test-parity/) | Does the port test every single thing upstream tested? |
 | [`component-identification`](component-identification/) | What UI does this app actually have? |
+<<<<<<< HEAD
 | [`component-parity`](component-parity/) | Does the port's UI match the original's, down to its labels? |
+=======
+| [`component-parity`](component-parity/) | Does the port's UI match the original's? |
+>>>>>>> 5ef8cf9135e493a12cb3c1262ca65315d5e8401d
 | [`translation-parity`](translation-parity/) | Does it say the same things, in the same 78 languages? |
 | [`accountability-ensurance`](accountability-ensurance/) | Is any of this being excused rather than built? |
 
@@ -38,6 +42,14 @@ the number at the bottom of the test runner.
 one that matches on all four axes: same widget type in the same number, same
 CSS classes, same signals and actions, same translatable strings. Compared per
 component, never as app-wide totals. Recorded in `COMPONENT_PARITY.md`.
+
+**Translation parity** — the port emits the same gettext catalogue as upstream:
+the same `(msgctxt, msgid)` keys, byte for byte, under the same domain name,
+with upstream's whole `po/` directory carried across. Byte-identical because a
+msgid is a hash key, and one reworded label silently discards every language's
+translation of it. Both trees emit a `catalogue.yaml`; comparing them generates
+`translation-parity.yaml`, whose `summary.parity` is the boolean. The
+judgements go in `TRANSLATION_PARITY.md`, because the YAML is regenerated.
 
 **Translation parity** — the port emits the same gettext catalogue as upstream:
 the same `(msgctxt, msgid)` keys, byte for byte, under the same domain name,
