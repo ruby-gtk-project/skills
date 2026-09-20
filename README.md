@@ -13,10 +13,15 @@ provide the scans that check it.
 | [`test-parity`](test-parity/) | Does the port test every single thing upstream tested? |
 | [`component-identification`](component-identification/) | What UI does this app actually have? |
 | [`component-parity`](component-parity/) | Does the port's UI match the original's? |
+| [`accountability-ensurance`](accountability-ensurance/) | Is any of this being excused rather than built? |
 
 `component-identification` produces the inventory; `component-parity` compares
 two of them. `test-parity` stands alone. A port is done when test parity and
 component parity both hold — neither implies the other.
+
+`accountability-ensurance` guards all three. The parity skills have two states,
+`ported` and `gap`, and no third — because the third state is where ports go to
+die. It hunts the prose that tries to create one anyway.
 
 ## The two definitions everything rests on
 
