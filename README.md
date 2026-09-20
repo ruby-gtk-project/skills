@@ -4,12 +4,15 @@ Agent skills for the GNOME → Ruby GTK4 port campaign (see
 [`ruby-gtk-project/.github`](https://github.com/ruby-gtk-project/.github) for
 the plan).
 
-A port is finished when the Ruby app does everything the original does. These
-skills define what "everything" means precisely enough to be checked, and
-provide the scans that check it.
+`ruby-gtk` and `ruby-gtk-testing` are how the port gets written and run. The
+other four are how it gets checked: a port is finished when the Ruby app does
+everything the original does, and they define what "everything" means precisely
+enough to be checked.
 
 | Skill | Answers |
 |---|---|
+| [`ruby-gtk`](ruby-gtk/) | How is Ruby GTK4/Libadwaita written here? |
+| [`ruby-gtk-testing`](ruby-gtk-testing/) | Does the app actually run and do the thing? |
 | [`test-parity`](test-parity/) | Does the port test every single thing upstream tested? |
 | [`component-identification`](component-identification/) | What UI does this app actually have? |
 | [`component-parity`](component-parity/) | Does the port's UI match the original's? |
@@ -37,13 +40,16 @@ totals. Recorded in `COMPONENT_PARITY.md`.
 
 ## Install
 
-The forks vendor skills into `.claude/skills/` on the `ruby` branch:
+Nothing installs these by hand. This repo is the only editable home for all six
+skills; everything downstream is a generated copy:
 
-```sh
-git clone https://github.com/ruby-gtk-project/skills /tmp/skills
-cp -r /tmp/skills/{test-parity,component-identification,component-parity} \
-      .claude/skills/
-```
+1. A nightly action in
+   [`ruby-gtk-project/.github`](https://github.com/ruby-gtk-project/.github)
+   syncs `main` here into `port-scaffold/.claude/skills/` there.
+2. Every fork's `ruby` branch gets `port-scaffold/` copied onto it.
+
+So: edit a skill here, and it reaches all 76 forks on its own. Editing a copy
+in the scaffold or in a fork gets overwritten.
 
 ## The scans
 
