@@ -87,6 +87,18 @@ REPO=$(basename -s .git "$(git remote get-url origin)")
 UP=$(gh api "repos/ruby-gtk-project/$REPO" --jq '.parent.default_branch')
 ```
 
+That needs network and a `gh` login, and often you have neither. Offline, take
+the branch from the clone — `git branch -r` lists it, and it is whichever
+remote branch is not `ruby`:
+
+```sh
+git -C <upstream-tree> rev-parse --short HEAD    # the sha for the ledger header
+```
+
+A worktree checked out from `origin/main` is **detached**, so the generated
+YAML records `ref: HEAD`. That is cosmetic; write the real branch name in the
+ledger header, which is the copy a human reads.
+
 ```sh
 scripts/catalogue.rb <upstream-tree> --role upstream > upstream-catalogue.yaml
 scripts/catalogue.rb <port-tree>     --role port     > port-catalogue.yaml
@@ -97,6 +109,12 @@ under **The data format**. Underneath it, `scripts/msgid-census.sh <tree>`
 does the extraction and prints one row per *call site*:
 `msgctxt<TAB>msgid<TAB>kind<TAB>file:line`, with `-` for no context. Run it
 directly when you want to grep the raw scan; the catalogue is what you diff.
+Step 2's hand-checks read the raw rows, so produce those too:
+
+```sh
+scripts/msgid-census.sh <upstream-tree> > upstream-msgids.tsv
+scripts/msgid-census.sh <port-tree>     > port-msgids.tsv
+```
 
 The key is the `(msgctxt, msgid)` pair, because that is what gettext looks up
 — so `cut -f1,2 | sort -u` over the census is the catalogue and everything
@@ -117,10 +135,32 @@ it.** This is the step that makes the number mean something, and it costs one
 command, because the `.po` files record what translators were actually handed:
 
 ```sh
-scripts/msgid-census.sh up/po | awk -F'\t' '$4 ~ /^de\.po/' | cut -f1,2 | sort -u > de.keys
-cut -f1,2 upstream-msgids.tsv | sort -u > src.keys
+scripts/msgid-census.sh <upstream-tree> | awk -F'\t' '$4 ~ /(^|\/)de\.po:/' | cut -f1,2 | sort -u > de.keys
+cut -f1,2 upstream-msgids.tsv | grep -v '^!unresolved' | sort -u > src.keys
 comm -3 de.keys src.keys
 ```
+
+Anchor the filter on `/de\.po:` and not on `^de\.po`, because the path in
+column 4 is relative to whichever tree you passed: scanning `up/po` gives
+`de.po:123` and scanning `up` gives `po/de.po:123`. Anchored to the start, the
+second silently matches nothing, `de.keys` comes out empty, and `comm -3`
+prints every message in the app as a difference — which looks like a
+catastrophe and is a typo.
+
+**Prefer a committed `.pot` when the tree has one**, since it is what
+`xgettext` actually extracted rather than what one translator was last sent.
+Check its age first — it is a build artifact somebody committed by hand, and
+it goes stale silently:
+
+```sh
+grep -m1 POT-Creation-Date <upstream-tree>/po/*.pot
+git -C <upstream-tree> log -1 --format=%cs
+```
+
+Sudoku's is eleven months behind its HEAD and still contains release notes
+that upstream stopped extracting in a commit called *"Fix translation
+support"*. A `.pot` older than the last source change is a lead, not ground
+truth.
 
 The two sets will not be identical and **that is the expected result**, because
 a `.po` file is a snapshot of the last `msgmerge`. Every line of the difference
@@ -158,9 +198,26 @@ the right direction for the difference to run. Report the upstream bug too.
 
 A difference you cannot explain as one of the three is a scanner miss, not a
 stale catalogue, and you fix it by reading the file before writing any ledger.
-Known under-reports: a msgid built by concatenating literals across lines, and
-a marker whose first argument is a variable rather than a literal. Both are
-invisible to any regex and both are found by this cross-check.
+
+### Unresolved markers
+
+A marker whose argument is an expression rather than a literal —
+`_(page[:head])`, `dgettext(Config.GETTEXT_PACKAGE, this.name)` — cannot be
+read by any regex. The census does not drop those: it emits a row with
+`!unresolved` in the msgctxt column, and `catalogue.rb` collects them under
+`totals.unresolved` and an `unresolved:` list of `marker` and `site`.
+
+**A non-zero `unresolved` means the catalogue is incomplete by at least that
+many messages, and the ledger cannot be written until each one is censused by
+hand.** Open the site, find the table or constant the expression indexes, and
+add its strings as ordinary rows. gnome-tour's port reaches thirteen of its
+twenty-three messages through two such calls over a frozen `PAGES` table;
+gnome-contacts upstream has two, both dynamic lookups over tables marked with
+`N_()` elsewhere.
+
+The other known under-report is a msgid built by concatenating literals across
+lines. That one is invisible even as an unresolved row, and the po cross-check
+above is what finds it.
 
 **Read the output as a lead, not a verdict.** Then open the files. The census
 gives you keys; the ledger needs to say what each message is *for*, and
@@ -188,7 +245,8 @@ cut -f1,2 port-msgids.tsv     | sort -u > port.keys
 wc -l < up.keys                                  # 1. messages (distinct keys)   217
 wc -l < upstream-msgids.tsv                      # 2. occurrences (call sites)   260
 ls up/po/*.po | wc -l                            # 3. languages                   78
-ruby scripts/catalogue.rb up --role upstream     # 4. translated strings      14,898
+# 4. translated strings (the languages.translated_strings field, not the whole document)
+ruby scripts/catalogue.rb up --role upstream | ruby -ryaml -e 'p YAML.safe_load($stdin)["languages"]'
 cut -f1,2 upstream-msgids.tsv | sort | uniq -c | sort -rn   # 5. uses per message
 ```
 
@@ -285,6 +343,10 @@ totals:
   reused: 19                # messages with more than one call site
   plural: 8
   with_context: 11
+  unresolved: 2            # markers whose argument is not a literal
+unresolved:                # each one is a message the catalogue is missing
+  - marker: 'dgettext(Config.GETTEXT_PACKAGE, this.name);'
+    site: src/core/contacts-type-descriptor.vala:45
 languages:
   count: 78                 # .po files, not LINGUAS
   translated_strings: 14898
@@ -362,6 +424,31 @@ on the wrong ledger's business.
 
 `text_owed` exists so that closing a gap is transcription. Copy it; never
 retype it.
+
+#### When the scanner is the thing that is wrong
+
+Two rules appear to collide: *never hand-edit the YAML*, and *the markdown
+renders the YAML, so do not let them disagree*. When the census itself is
+wrong — it missed a marker style, it read a file it should have skipped — both
+cannot hold at once. The order to try is fixed:
+
+1. **Fix the scanner.** `msgid-census.sh` and `catalogue.rb` live in this
+   skill, which is one editable home synced to every fork, so a defect fixed
+   once is fixed for all 76 ports. Most defects found this way are three
+   characters of regex. Fix it, regenerate, and both documents agree again
+   with nothing hand-edited.
+2. **If it cannot be fixed generally** — the shape is specific to one repo,
+   like a table only a Ruby parser can read — census those messages by hand,
+   add them to the markdown ledger as ordinary rows, and say in the header
+   which rows did not come from the generated document and why. The YAML stays
+   exactly as emitted, its `totals` therefore lower than the ledger's, and the
+   discrepancy is *stated* rather than silently reconciled.
+3. **Never** edit the YAML to match the markdown. It is regenerated on every
+   run; an edit there survives nothing and hides the defect from the next
+   person, who will re-derive it from scratch.
+
+A scanner defect you worked around and did not report is the one outcome worse
+than the defect. Report it upstream to this skill.
 
 ### Step 3 — Write the ledger
 
@@ -452,11 +539,25 @@ Parity is proven when all three hold:
 - `summary.parity` is `true` in a freshly regenerated `translation-parity.yaml`
   — which is gaps `0`, `kind_mismatch` `0`, `languages_missing` empty and
   `domain_matches` true, all at once;
-- `msgfmt`/`rmsgfmt` compiles every `.po` without error, and the port's build
-  target installs one `.mo` per language;
+- **every shipped language actually reaches the user.** The usual mechanism is
+  `msgfmt`/`rmsgfmt` compiling each `.po` and the build target installing one
+  `.mo` per language, and that is what to check when the port uses gettext.
+  A port that reads `po/*.po` at runtime instead satisfies this too — the
+  requirement is delivery, not a file format. What it does *not* satisfy is
+  `domain_matches`, because there is no domain; that is a real finding with
+  real costs (no `msgfmt -c` validation, no plural-forms engine, no context
+  support) and it belongs in the ledger as an open item, not waved through.
 - the app runs under a non-English locale and shows translated text —
   `LANGUAGE=de LC_ALL=de_DE.UTF-8 <port binary>`, driven headless per
   `ruby-gtk-testing`, asserting on one known string.
+
+**A check you could not run is not a check that passed.** `msgfmt` is often
+not installed, and the port's own gems may not be either. When that happens,
+say which check did not run and why, and do not report parity as proven —
+`summary.parity: true` covers the four document conditions and says nothing
+about whether the app speaks German. Write the unrun checks into the ledger
+header beside the numbers; the next person with a working toolchain closes
+them in a minute, and cannot if nobody wrote down that they were open.
 
 Regenerate before reading; a `parity: true` from an old run proves the state
 of an old tree. The compare step is cheap and has no excuse not to be rerun.
@@ -513,7 +614,7 @@ inflate every naive count: of gnome-contacts' 21 `fuzzy` flags, **14 sit on
 obsolete entries and one on a file header**, leaving the 6 that are real. A
 scan that does not skip `#~` reports three and a half times the fuzzy work.
 
-### One file in 78 will have CRLF line endings
+### One file in the set will have CRLF line endings
 
 `po/th.po` has CRLF terminators and the other 77 have LF. Nothing warns you:
 `msgfmt` accepts it, `git` shows nothing, and every editor opens it. But a
@@ -542,9 +643,15 @@ instead, which tolerates the whitespace because it was written to read seven
 languages' spacing conventions:
 
 ```sh
-comm -13 <(grep -v '^#' po/POTFILES.in | sort) \
+POTFILES=$(ls po/POTFILES.in po/POTFILES 2>/dev/null | head -1)
+comm -13 <(grep -v '^#' "$POTFILES" | sort) \
          <(scripts/msgid-census.sh . | cut -f4 | cut -d: -f1 | grep -v '^po/' | sort -u)
 ```
+
+The file is `po/POTFILES.in` in most GNOME trees and plain `po/POTFILES` in
+others — Sudoku uses the second. Hardcoding the first makes `grep` fail, the
+process substitution produce nothing, and the check pass by printing nothing,
+which is indistinguishable from success. Resolve the name first.
 
 Anything printed is a file whose strings are invisible to translators. Wire it
 into the same target that runs the tests. Run it against upstream once too —
@@ -667,7 +774,14 @@ those files exist, and it is simultaneously a component-parity finding. The
 - Never count a row `ported` from reading the code. Count it from the census.
 - Never hand-edit the YAML. It is generated; anything written there is lost on
   the next run, which makes it the worst possible place to record a decision.
-  Decisions go in `TRANSLATION_PARITY.md`.
+  Decisions go in `TRANSLATION_PARITY.md`. When the scanner is what is wrong,
+  fix the scanner — see **When the scanner is the thing that is wrong**.
+- Never write a ledger while `totals.unresolved` is non-zero. Those are
+  messages, counted and located, that the census could not read; leaving them
+  out makes the port look smaller than it is and turns a scanner limit into a
+  translation gap.
+- Never report a check you could not run as one that passed. Name it as unrun,
+  in the ledger header, beside the numbers.
 - Never make the occurrence count a pass condition, and never leave it out of
   the report. It is the metric that finds a dropped call site behind a key the
   catalogue already has; it is not a statement about the catalogue. Equal keys

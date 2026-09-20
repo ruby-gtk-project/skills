@@ -36,9 +36,18 @@ def messages_in(tree)
   raise "census failed for #{tree}" unless $CHILD_STATUS.success?
 
   grouped = Hash.new { |h, k| h[k] = { kinds: [], sites: [] } }
+  unresolved = []
   rows.each do |row|
     ctxt, id, kind, site = row.split("\t", 4)
     next if id.nil? || id.empty?
+    # A marker whose argument is an expression rather than a literal. Not a
+    # message - it is a place where a message is, that the scanner cannot
+    # read. Carried out separately so it is counted and chased, never merged
+    # into the catalogue and never silently dropped.
+    if ctxt == '!unresolved'
+      unresolved << { 'marker' => id, 'site' => site }
+      next
+    end
     # po/ is scanned by the census on purpose - Step 1 diffs it against the
     # source to prove the scanner - but it is not part of the catalogue. A
     # .po holds every msgid the last msgmerge knew about, including the ones
@@ -51,6 +60,7 @@ def messages_in(tree)
     grouped[key][:sites] << site
   end
 
+  @unresolved = unresolved.sort_by { |u| u['site'].to_s }
   grouped.sort_by { |(ctxt, id), _| [ctxt.to_s, id] }.map do |(ctxt, id), v|
     entry = {}
     entry['ctxt'] = ctxt if ctxt
@@ -150,7 +160,13 @@ def languages_in(tree)
 
   files = Dir.glob(File.join(po_dir, '*.po')).map { |f| File.basename(f, '.po') }.sort
   linguas_path = File.join(po_dir, 'LINGUAS')
-  linguas = File.exist?(linguas_path) ? File.read(linguas_path).split.reject { |l| l.start_with?('#') }.sort : nil
+  # LINGUAS is whitespace-separated language codes with `#` comment *lines*.
+  # Rejecting tokens that start with '#' is not enough: a comment's remaining
+  # words ("Please", "keep", "this"...) survive and are reported as languages
+  # the file has and the directory lacks, which buries any real finding.
+  linguas = if File.exist?(linguas_path)
+              File.readlines(linguas_path).map { |l| l.sub(/#.*/, '') }.join(' ').split.sort
+            end
 
   translated = untranslated = fuzzy = 0
   Dir.glob(File.join(po_dir, '*.po')).each do |f|
@@ -212,9 +228,13 @@ def catalogue(tree, role, domain_override)
       'occurrences' => msgs.sum { |m| m['uses'] },
       'reused' => msgs.count { |m| m['uses'] > 1 },
       'plural' => msgs.count { |m| m['kind'] == 'plural' },
-      'with_context' => msgs.count { |m| m['ctxt'] }
+      'with_context' => msgs.count { |m| m['ctxt'] },
+      # Non-zero means the catalogue below is incomplete by at least this
+      # many messages. Census them by hand before writing any ledger.
+      'unresolved' => @unresolved.size
     },
     'languages' => langs,
+    'unresolved' => @unresolved,
     'messages' => msgs
   }
 end

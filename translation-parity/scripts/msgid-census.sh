@@ -97,17 +97,21 @@ for tree in "$@"; do
       # <p>, <li>, <caption> and gschema <summary>/<description> is a message.
       *.xml|*.xml.in|*.xml.in.in)
         # Whole file as one string, then pull the text of each translatable
-        # element - metainfo <name>/<summary>/<p>/<li>/<caption> and gschema
-        # <summary>/<description>. Read this way because those elements wrap
+        # element - metainfo <name>/<summary>/<p>/<li>/<caption>/<keyword>
+        # and gschema <summary>/<description>. <keyword> is easy to forget and
+        # xgettext does extract it: Sudoku ships five. Read this way because those elements wrap
         # over several lines far more often than not, and a line-at-a-time
         # scan silently drops every paragraph longer than 80 columns.
         #
         # <release> notes are NOT extracted: the AppStream ITS rules xgettext
         # applies mark them untranslatable, and a scanner that takes them
         # reports hundreds of phantom messages for an app with a long history.
+        # The opening tag may carry attributes - Sudoku writes
+        # `<releases translate="no">` - so the pattern must not assume a bare
+        # tag, or all 41 of its release notes come through.
         tr '\n' ' ' < "$f" \
-        | sed -E 's|<releases>.*</releases>| |g; s|<release[ >][^<]*<\/release>| |g' \
-        | grep -oE '<(name|summary|description|p|li|caption)( [^>]*)?>[^<]+</' \
+        | sed -E 's|<releases( [^>]*)?>.*</releases>| |g; s|<release[ >][^<]*<\/release>| |g' \
+        | grep -oE '<(name|summary|description|p|li|caption|keyword)( [^>]*)?>[^<]+</' \
         | grep -v 'translat[a-z]*="no"' \
         | sed -E 's|^<[a-z]+( [^>]*)?>||; s|</$||; s|[[:space:]]+| |g; s|^ ||; s| $||' \
         | while IFS= read -r m; do
@@ -139,7 +143,31 @@ for tree in "$@"; do
       # first is the context and the second is the msgid.
       *.vala|*.c|*.cpp|*.h|*.py|*.js|*.ts|*.rs|*.rb|*.blp)
         awk -v F="$rel" '
-          function unq(s) { return s }
+          # Both quote styles. Ruby ports written to rubocop defaults spell
+          # every marker with single quotes, as Python and GJS often do;
+          # a double-quote-only scanner reports those ports as having almost
+          # no messages, which reads as a translation gap rather than as a
+          # scanner that cannot see them. The single quote is built with
+          # sprintf so the program survives being written inside a shell
+          # single-quoted string.
+          BEGIN {
+            Q  = sprintf("%c", 39)
+            DQ = "^[[:space:]]*\"([^\"\\\\]|\\\\.)*\""
+            SQ = "^[[:space:]]*" Q "([^" Q "\\\\]|\\\\.)*" Q
+          }
+          # Take the leading string literal of s, in either quote style.
+          # Sets LIT to its contents and LITREST to what follows.
+          function take_lit(s,   m, q) {
+            if (match(s, DQ)) q = "\""
+            else if (match(s, SQ)) q = Q
+            else return 0
+            m = substr(s, RSTART, RLENGTH)
+            LITREST = substr(s, RSTART + RLENGTH)
+            sub("^[[:space:]]*" q, "", m)
+            sub(q "$", "", m)
+            LIT = m
+            return 1
+          }
           {
             line = $0
             # Whole-line comments only: a marker inside a trailing comment is
@@ -153,15 +181,31 @@ for tree in "$@"; do
               pos = start + RLENGTH
               rest = substr(line, pos)
 
-              # first literal
-              if (!match(rest, /^[[:space:]]*"([^"\\]|\\.)*"/)) continue
-              a = substr(rest, RSTART, RLENGTH); sub(/^[[:space:]]*"/, "", a); sub(/"$/, "", a)
-              rest2 = substr(rest, RSTART + RLENGTH)
+              # First literal - or, when the argument is not a literal at all,
+              # a row saying so. `_(page[:head])` over a table of strings is
+              # a real and common shape, and no regex can resolve it. Emitting
+              # nothing makes the port look like it has fewer messages than it
+              # has, which reads as a translation gap; emitting an `unresolved`
+              # row makes the scanner`s blind spot countable, and the skill
+              # requires every one of them to be censused by hand.
+              if (!take_lit(rest)) {
+                expr = substr(rest, 1, 60)
+                sub(/[[:space:]]*$/, "", expr)
+                print "!unresolved\t" m "(" expr "\tunresolved\t" F ":" NR
+                continue
+              }
+              a = LIT
+              rest2 = LITREST
 
               ctxt = "-"; id = a; kind = "single"
               if (m == "C_" || m == "NC_" || m == "p_" || m == "np_" || m ~ /^d?n?pgettext/) {
-                if (!match(rest2, /^[[:space:]]*,[[:space:]]*"([^"\\]|\\.)*"/)) continue
-                b = substr(rest2, RSTART, RLENGTH); sub(/^[^"]*"/, "", b); sub(/"$/, "", b)
+                # The context markers take the msgid second; drop the comma
+                # and read another literal, which may be quoted either way -
+                # mixing the two styles in one call is legal and does happen.
+                if (rest2 !~ /^[[:space:]]*,/) continue
+                sub(/^[[:space:]]*,/, "", rest2)
+                if (!take_lit(rest2)) continue
+                b = LIT
                 ctxt = a; id = b
                 if (m == "np_") kind = "plural"
               } else if (m == "ngettext" || m == "n_" || m == "Nn_") {
